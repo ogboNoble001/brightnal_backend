@@ -2,7 +2,7 @@ let products = [];
 let currentEditId = null;
 let currentImages = [];
 let currentView = 'grid';
-const API_URL = 'https://brightnal.onrender.com/api';
+const API_URL = 'https://brightnal.onrender.com';
 
 // FIX 1: Add loading indicator
 function showLoading(message = 'Loading...') {
