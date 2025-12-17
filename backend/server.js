@@ -249,9 +249,3 @@ app.listen(PORT, () => {
   console.log(`⚠️  Only PUT /api/products/:id endpoint is active`);
 });
 
-const response = await fetch(`${API_URL}/api/products/${productId}`, {
-  method: 'PUT',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify(productData)
-});
-
