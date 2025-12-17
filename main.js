@@ -4,6 +4,81 @@ let currentImages = [];
 let currentView = 'grid';
 const API_URL = 'https://brightnal.onrender.com/api';
 
+// FIX 1: Add loading indicator
+function showLoading(message = 'Loading...') {
+    const loadingDiv = document.getElementById('loadingOverlay') || createLoadingOverlay();
+    loadingDiv.querySelector('.loading-text').textContent = message;
+    loadingDiv.style.display = 'flex';
+}
+
+function hideLoading() {
+    const loadingDiv = document.getElementById('loadingOverlay');
+    if (loadingDiv) {
+        loadingDiv.style.display = 'none';
+    }
+}
+
+function createLoadingOverlay() {
+    const overlay = document.createElement('div');
+    overlay.id = 'loadingOverlay';
+    overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 10000;
+        flex-direction: column;
+    `;
+    overlay.innerHTML = `
+        <div style="background: white; padding: 30px; border-radius: 10px; text-align: center;">
+            <div class="spinner" style="border: 4px solid #f3f3f3; border-top: 4px solid #6366f1; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin: 0 auto 20px;"></div>
+            <div class="loading-text" style="font-size: 16px; color: #333;">Loading...</div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    
+    // Add spinner animation
+    if (!document.getElementById('spinner-style')) {
+        const style = document.createElement('style');
+        style.id = 'spinner-style';
+        style.textContent = `
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+    
+    return overlay;
+}
+
+// FIX 2: Better fetch with timeout and retry
+async function fetchWithTimeout(url, options = {}, timeout = 60000) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+    
+    try {
+        const response = await fetch(url, {
+            ...options,
+            signal: controller.signal
+        });
+        clearTimeout(id);
+        return response;
+    } catch (error) {
+        clearTimeout(id);
+        if (error.name === 'AbortError') {
+            throw new Error('Request timeout - server is waking up, please try again');
+        }
+        throw error;
+    }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     loadProducts();
     updateDashboard();
@@ -49,24 +124,63 @@ function toggleMobileMenu() {
     document.getElementById('sidebar').classList.toggle('open');
 }
 
+// FIX 3: Better error handling in loadProducts
 async function loadProducts() {
+    showLoading('Loading products...');
+    
     try {
-        const response = await fetch(`${API_URL}/products`);
-        if (!response.ok) throw new Error('Failed to fetch products');
+        // First check if server is awake
+        const healthResponse = await fetchWithTimeout(`${API_URL.replace('/api', '')}/health`, {}, 10000);
+        
+        if (!healthResponse.ok) {
+            throw new Error('Server is starting up, please wait...');
+        }
+        
+        const healthData = await healthResponse.json();
+        if (healthData.status !== 'healthy') {
+            showToast('Server is warming up. This may take 30-60 seconds on first load.', 'info');
+            await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+        
+        // Now fetch products with longer timeout
+        const response = await fetchWithTimeout(`${API_URL}/products`, {}, 60000);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
         products = await response.json();
         displayProducts();
         updateDashboard();
         populateCategoryFilter();
+        hideLoading();
+        
+        if (products.length === 0) {
+            showToast('No products found. Add your first product!', 'info');
+        }
+        
     } catch (error) {
+        hideLoading();
         console.error('Error loading products:', error);
-        showToast('Failed to load products from server', 'error');
+        
+        if (error.message.includes('timeout') || error.message.includes('starting')) {
+            showToast('⏳ Server is waking up (free tier). This takes 50-60 seconds. Please refresh in a moment.', 'warning');
+        } else {
+            showToast('Failed to load products: ' + error.message, 'error');
+        }
+        
+        // Try to load from localStorage as fallback
         const saved = localStorage.getItem('brightnalProducts');
-        products = saved ? JSON.parse(saved) : [];
-        displayProducts();
+        if (saved) {
+            products = JSON.parse(saved);
+            displayProducts();
+            showToast('Loaded products from local cache', 'info');
+        }
     }
 }
 
 function saveProductsToStorage() {
+    localStorage.setItem('brightnalProducts', JSON.stringify(products));
     updateDashboard();
     displayProducts();
 }
@@ -160,7 +274,7 @@ function createProductCard(product) {
     return `
         <div class="product-card" onclick="viewProduct('${product.id}')">
             <div class="product-image">
-                ${image ? `<img src="${image}" alt="${product.name}">` : '<div class="product-image-placeholder">📦</div>'}
+                ${image ? `<img src="${image}" alt="${product.name}" onerror="this.parentElement.innerHTML='<div class=\\'product-image-placeholder\\'>📦</div>'">` : '<div class="product-image-placeholder">📦</div>'}
                 <div class="product-actions">
                     <button class="action-btn edit" onclick="event.stopPropagation(); editProduct('${product.id}')">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -199,7 +313,7 @@ function createProductRow(product) {
             <td>
                 <div class="table-product-info">
                     <div class="table-product-image">
-                        ${image ? `<img src="${image}" alt="${product.name}">` : '📦'}
+                        ${image ? `<img src="${image}" alt="${product.name}" onerror="this.parentElement.innerHTML='📦'">` : '📦'}
                     </div>
                     <div class="table-product-details">
                         <div class="table-product-name">${product.name}</div>
@@ -267,18 +381,59 @@ function closeProductModal() {
     currentImages = [];
 }
 
-function handleFileSelect(event) {
+// FIX 4: Compress images before upload
+function compressImage(base64, maxWidth = 800, maxHeight = 800, quality = 0.7) {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            let width = img.width;
+            let height = img.height;
+            
+            if (width > height) {
+                if (width > maxWidth) {
+                    height *= maxWidth / width;
+                    width = maxWidth;
+                }
+            } else {
+                if (height > maxHeight) {
+                    width *= maxHeight / height;
+                    height = maxHeight;
+                }
+            }
+            
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+            resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.src = base64;
+    });
+}
+
+async function handleFileSelect(event) {
     const files = Array.from(event.target.files);
-    files.forEach(file => {
+    showLoading('Processing images...');
+    
+    for (const file of files) {
         if (file.type.startsWith('image/')) {
             const reader = new FileReader();
-            reader.onload = function(e) {
-                currentImages.push(e.target.result);
-                displayImagePreviews();
+            reader.onload = async function(e) {
+                try {
+                    const compressed = await compressImage(e.target.result);
+                    currentImages.push(compressed);
+                    displayImagePreviews();
+                } catch (error) {
+                    console.error('Image compression error:', error);
+                    showToast('Failed to process image: ' + file.name, 'error');
+                }
             };
             reader.readAsDataURL(file);
         }
-    });
+    }
+    
+    setTimeout(hideLoading, 500);
 }
 
 function handleDragOver(e) {
@@ -290,20 +445,30 @@ function handleDragLeave(e) {
     e.currentTarget.classList.remove('dragover');
 }
 
-function handleDrop(e) {
+async function handleDrop(e) {
     e.preventDefault();
     e.currentTarget.classList.remove('dragover');
     const files = Array.from(e.dataTransfer.files);
-    files.forEach(file => {
+    showLoading('Processing images...');
+    
+    for (const file of files) {
         if (file.type.startsWith('image/')) {
             const reader = new FileReader();
-            reader.onload = function(e) {
-                currentImages.push(e.target.result);
-                displayImagePreviews();
+            reader.onload = async function(e) {
+                try {
+                    const compressed = await compressImage(e.target.result);
+                    currentImages.push(compressed);
+                    displayImagePreviews();
+                } catch (error) {
+                    console.error('Image compression error:', error);
+                    showToast('Failed to process image: ' + file.name, 'error');
+                }
             };
             reader.readAsDataURL(file);
         }
-    });
+    }
+    
+    setTimeout(hideLoading, 500);
 }
 
 function displayImagePreviews() {
@@ -321,6 +486,7 @@ function removeImage(index) {
     displayImagePreviews();
 }
 
+// FIX 5: Better save product with progress tracking
 async function saveProduct(event) {
     event.preventDefault();
 
@@ -335,38 +501,57 @@ async function saveProduct(event) {
     };
 
     try {
+        if (currentImages.length > 0) {
+            showLoading(`Uploading product with ${currentImages.length} image(s)... This may take a minute.`);
+        } else {
+            showLoading('Saving product...');
+        }
+        
         let response;
         
         if (currentEditId) {
-            response = await fetch(`${API_URL}/products/${currentEditId}`, {
+            response = await fetchWithTimeout(`${API_URL}/products/${currentEditId}`, {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(productData)
-            });
+            }, 120000); // 2 minute timeout for uploads
             
-            if (!response.ok) throw new Error('Failed to update product');
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to update product');
+            }
             showToast('Product updated successfully!', 'success');
         } else {
-            response = await fetch(`${API_URL}/products`, {
+            response = await fetchWithTimeout(`${API_URL}/products`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(productData)
-            });
+            }, 120000);
             
-            if (!response.ok) throw new Error('Failed to create product');
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to create product');
+            }
             showToast('Product added successfully!', 'success');
         }
 
+        hideLoading();
         await loadProducts();
         closeProductModal();
         
     } catch (error) {
+        hideLoading();
         console.error('Error saving product:', error);
-        showToast('Failed to save product: ' + error.message, 'error');
+        
+        if (error.message.includes('timeout')) {
+            showToast('⏳ Upload is taking longer than expected. The server may be processing your images. Please refresh in a moment to see if it was saved.', 'warning');
+        } else {
+            showToast('Failed to save product: ' + error.message, 'error');
+        }
     }
 }
 
@@ -377,15 +562,22 @@ function editProduct(id) {
 async function deleteProduct(id) {
     if (confirm('Are you sure you want to delete this product?')) {
         try {
-            const response = await fetch(`${API_URL}/products/${id}`, {
+            showLoading('Deleting product...');
+            
+            const response = await fetchWithTimeout(`${API_URL}/products/${id}`, {
                 method: 'DELETE'
-            });
+            }, 30000);
             
-            if (!response.ok) throw new Error('Failed to delete product');
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to delete product');
+            }
             
+            hideLoading();
             await loadProducts();
             showToast('Product deleted successfully!', 'success');
         } catch (error) {
+            hideLoading();
             console.error('Error deleting product:', error);
             showToast('Failed to delete product: ' + error.message, 'error');
         }
@@ -422,7 +614,9 @@ function populateCategoryFilter() {
 
 async function exportData() {
     try {
-        const response = await fetch(`${API_URL}/products`);
+        showLoading('Exporting data...');
+        
+        const response = await fetchWithTimeout(`${API_URL}/products`, {}, 30000);
         if (!response.ok) throw new Error('Failed to fetch products');
         const products = await response.json();
         
@@ -434,10 +628,13 @@ async function exportData() {
         link.download = 'brightnal-products-' + new Date().toISOString().split('T')[0] + '.json';
         link.click();
         URL.revokeObjectURL(url);
+        
+        hideLoading();
         showToast('Data exported successfully!', 'success');
     } catch (error) {
+        hideLoading();
         console.error('Error exporting data:', error);
-        showToast('Failed to export data', 'error');
+        showToast('Failed to export data: ' + error.message, 'error');
     }
 }
 
@@ -448,5 +645,5 @@ function showToast(message, type = 'success') {
     toast.classList.add('show');
     setTimeout(() => {
         toast.classList.remove('show');
-    }, 3000);
+    }, type === 'warning' ? 5000 : 3000); // Longer for warnings
 }
