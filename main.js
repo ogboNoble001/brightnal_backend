@@ -2,7 +2,7 @@ let products = [];
 let currentEditId = null;
 let currentImages = [];
 let currentView = 'grid';
-const API_URL = 'https://brightnal.onrender.com';
+const API_URL = 'https://brightnal.onrender.com/api';
 
 // FIX 1: Add loading indicator
 function showLoading(message = 'Loading...') {
@@ -487,6 +487,7 @@ function removeImage(index) {
 }
 
 // FIX 5: Better save product with progress tracking
+
 async function saveProduct(event) {
     event.preventDefault();
 
@@ -501,58 +502,114 @@ async function saveProduct(event) {
     };
 
     try {
+        if (!currentEditId) {
+            showToast('Please use edit mode to update products', 'error');
+            return;
+        }
+
         if (currentImages.length > 0) {
             showLoading(`Uploading product with ${currentImages.length} image(s)... This may take a minute.`);
         } else {
             showLoading('Saving product...');
         }
         
-        let response;
+        // ONLY UPDATE - NO CREATE
+        const response = await fetchWithTimeout(`${API_URL}/products/${currentEditId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(productData)
+        }, 120000); // 2 minute timeout for uploads
         
-        if (currentEditId) {
-            response = await fetchWithTimeout(`${API_URL}/products/${currentEditId}`, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(productData)
-            }, 120000); // 2 minute timeout for uploads
-            
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Failed to update product');
-            }
-            showToast('Product updated successfully!', 'success');
-        } else {
-            response = await fetchWithTimeout(`${API_URL}/products`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(productData)
-            }, 120000);
-            
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Failed to create product');
-            }
-            showToast('Product added successfully!', 'success');
-        }
-
         hideLoading();
-        await loadProducts();
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.message || 'Failed to update product');
+        }
+        
+        const result = await response.json();
+        
+        // Show the success message from backend
+        showToast(result.message, 'success');
+        
         closeProductModal();
+        await loadProducts(); // Reload to see changes
         
     } catch (error) {
         hideLoading();
         console.error('Error saving product:', error);
-        
-        if (error.message.includes('timeout')) {
-            showToast('⏳ Upload is taking longer than expected. The server may be processing your images. Please refresh in a moment to see if it was saved.', 'warning');
-        } else {
-            showToast('Failed to save product: ' + error.message, 'error');
-        }
+        showToast('Error: ' + error.message, 'error');
     }
+}
+
+// ADD THIS FUNCTION RIGHT HERE - AFTER saveProduct
+function showToast(message, type = 'info') {
+    // Remove existing toast if any
+    const existingToast = document.getElementById('toast');
+    if (existingToast) {
+        existingToast.remove();
+    }
+    
+    // Create toast
+    const toast = document.createElement('div');
+    toast.id = 'toast';
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    
+    // Style
+    toast.style.cssText = `
+        position: fixed;
+        bottom: 30px;
+        right: 30px;
+        padding: 16px 24px;
+        background: ${type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : type === 'warning' ? '#f59e0b' : '#3b82f6'};
+        color: white;
+        border-radius: 8px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        z-index: 10001;
+        font-size: 14px;
+        font-weight: 500;
+        animation: slideIn 0.3s ease-out;
+    `;
+    
+    document.body.appendChild(toast);
+    
+    // Remove after 4 seconds
+    setTimeout(() => {
+        toast.style.animation = 'slideOut 0.3s ease-out';
+        setTimeout(() => toast.remove(), 300);
+    }, 4000);
+}
+
+// Add CSS animation for toast
+if (!document.getElementById('toast-animations')) {
+    const style = document.createElement('style');
+    style.id = 'toast-animations';
+    style.textContent = `
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        @keyframes slideOut {
+            from {
+                transform: translateX(0);
+                opacity: 1;
+            }
+            to {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+        }
+    `;
+    document.head.appendChild(style);
 }
 
 function editProduct(id) {

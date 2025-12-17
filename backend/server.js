@@ -5,19 +5,19 @@ import { neon } from "@neondatabase/serverless";
 
 const app = express();
 
-// FIX 1: CORS Configuration - Allow your Vercel domain
+// CORS Configuration
 app.use(cors({
   origin: ['https://brightnal.vercel.app', 'http://localhost:5500', 'http://127.0.0.1:5500'],
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['PUT', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// FIX 2: Increase payload limit for large base64 images (50MB)
+// Increase payload limit for large base64 images
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// FIX 3: Request timeout middleware
+// Request timeout middleware
 app.use((req, res, next) => {
   req.setTimeout(300000); // 5 minutes
   res.setTimeout(300000);
@@ -39,7 +39,7 @@ let status = {
   database: false
 };
 
-// FIX 4: Better connection testing with retry logic
+// Test connections with retry logic
 async function testConnections() {
   let dbRetries = 3;
   let cloudRetries = 3;
@@ -57,7 +57,7 @@ async function testConnections() {
       if (dbRetries === 0) {
         console.error("❌ Neon database connection failed:", error.message);
       } else {
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s before retry
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
   }
@@ -81,44 +81,15 @@ async function testConnections() {
   }
 }
 
-// FIX 5: Initialize database with better error handling
-async function initializeDatabase() {
-  try {
-    await sql`
-      CREATE TABLE IF NOT EXISTS products (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        description TEXT,
-        category TEXT NOT NULL,
-        price DECIMAL(10, 2) NOT NULL,
-        stock INTEGER NOT NULL DEFAULT 0,
-        sku TEXT UNIQUE NOT NULL,
-        images TEXT[],
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `;
-    console.log("✅ Products table initialized");
-  } catch (error) {
-    console.error("❌ Database initialization error:", error.message);
-  }
-}
-
-// FIX 6: Wait for connections before starting server
-async function initialize() {
-  await testConnections();
-  await initializeDatabase();
-}
-
-// Start initialization
-initialize();
+// Initialize
+testConnections();
 
 // ROUTES
 
-// Health check endpoints
+// Health check
 app.get("/", (req, res) => {
   res.json({
-    message: "Brightnal backend is running ✔",
+    message: "Brightnal backend is running - UPDATE ONLY MODE ✔",
     timestamp: new Date().toISOString()
   });
 });
@@ -131,163 +102,93 @@ app.get("/status", (req, res) => {
   });
 });
 
-app.get("/health", (req, res) => {
-  const isHealthy = status.cloudinary && status.database;
-  res.status(isHealthy ? 200 : 503).json({
-    status: isHealthy ? "healthy" : "unhealthy",
-    services: status
-  });
-});
-
-// FIX 7: Add error handling wrapper
+// Error handling wrapper
 const asyncHandler = (fn) => (req, res, next) => {
   Promise.resolve(fn(req, res, next)).catch(next);
 };
 
-// Get all products
-app.get("/api/products", asyncHandler(async (req, res) => {
+// Update product - ONLY ROUTE
+app.put("/api/products/:id", asyncHandler(async (req, res) => {
+  console.log("📥 Update request received for product:", req.params.id);
+  
+  // Check services
   if (!status.database) {
-    return res.status(503).json({ error: "Database not available. Please try again." });
-  }
-  
-  const products = await sql`
-    SELECT * FROM products 
-    ORDER BY created_at DESC
-  `;
-  res.json(products);
-}));
-
-// Get single product
-app.get("/api/products/:id", asyncHandler(async (req, res) => {
-  if (!status.database) {
-    return res.status(503).json({ error: "Database not available. Please try again." });
-  }
-  
-  const { id } = req.params;
-  const product = await sql`
-    SELECT * FROM products 
-    WHERE id = ${id}
-  `;
-  
-  if (product.length === 0) {
-    return res.status(404).json({ error: "Product not found" });
-  }
-  
-  res.json(product[0]);
-}));
-
-// Create product
-app.post("/api/products", asyncHandler(async (req, res) => {
-  if (!status.database) {
-    return res.status(503).json({ error: "Database not available. Please try again." });
-  }
-  
-  if (!status.cloudinary) {
-    return res.status(503).json({ error: "Image service not available. Please try again." });
-  }
-  
-  const { name, description, category, price, stock, sku, images } = req.body;
-  
-  // Validate required fields
-  if (!name || !category || price === undefined || !sku) {
-    return res.status(400).json({ 
-      error: "Missing required fields",
-      required: ["name", "category", "price", "sku"]
+    console.log("❌ Database not available");
+    return res.status(503).json({ 
+      success: false,
+      message: "Database not available. Please try again." 
     });
   }
   
-  let cloudinaryUrls = [];
-  
-  // Upload images to Cloudinary
-  if (images && images.length > 0) {
-    console.log(`📤 Uploading ${images.length} images to Cloudinary...`);
-    
-    for (let i = 0; i < images.length; i++) {
-      const base64Image = images[i];
-      try {
-        const uploadResult = await cloudinary.uploader.upload(base64Image, {
-          folder: "brightnal_products",
-          resource_type: "auto",
-          timeout: 60000 // 60 second timeout
-        });
-        cloudinaryUrls.push(uploadResult.secure_url);
-        console.log(`✅ Image ${i + 1}/${images.length} uploaded`);
-      } catch (uploadError) {
-        console.error(`❌ Cloudinary upload error for image ${i + 1}:`, uploadError.message);
-        // Continue with other images
-      }
-    }
-  }
-  
-  // Generate product ID
-  const productId = 'prod_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-  
-  // Insert into database
-  const result = await sql`
-    INSERT INTO products (id, name, description, category, price, stock, sku, images)
-    VALUES (
-      ${productId},
-      ${name},
-      ${description || ''},
-      ${category},
-      ${parseFloat(price)},
-      ${parseInt(stock) || 0},
-      ${sku},
-      ${cloudinaryUrls}
-    )
-    RETURNING *
-  `;
-  
-  console.log(`✅ Product created: ${name}`);
-  res.status(201).json(result[0]);
-}));
-
-// Update product
-app.put("/api/products/:id", asyncHandler(async (req, res) => {
-  if (!status.database) {
-    return res.status(503).json({ error: "Database not available. Please try again." });
+  if (!status.cloudinary) {
+    console.log("❌ Cloudinary not available");
+    return res.status(503).json({ 
+      success: false,
+      message: "Image service not available. Please try again." 
+    });
   }
   
   const { id } = req.params;
   const { name, description, category, price, stock, sku, images } = req.body;
   
+  console.log("📋 Update data received:", { name, category, price, sku, imageCount: images?.length || 0 });
+  
   // Check if product exists
+  console.log("🔍 Checking if product exists...");
   const existing = await sql`SELECT * FROM products WHERE id = ${id}`;
+  
   if (existing.length === 0) {
-    return res.status(404).json({ error: "Product not found" });
+    console.log("❌ Product not found:", id);
+    return res.status(404).json({ 
+      success: false,
+      message: "Product not found" 
+    });
   }
+  
+  console.log("✅ Product found:", existing[0].name);
   
   let cloudinaryUrls = existing[0].images || [];
   
   // Handle images
   if (images && images.length > 0) {
+    console.log("🖼️  Processing images...");
+    
     // Separate new images (base64) from existing URLs
     const newImages = images.filter(img => img.startsWith('data:'));
     const existingUrls = images.filter(img => !img.startsWith('data:'));
     
+    console.log(`📊 Image breakdown: ${newImages.length} new, ${existingUrls.length} existing`);
+    
     cloudinaryUrls = [...existingUrls];
     
     // Upload new images
-    if (newImages.length > 0 && status.cloudinary) {
-      console.log(`📤 Uploading ${newImages.length} new images...`);
+    if (newImages.length > 0) {
+      console.log(`📤 Starting upload of ${newImages.length} new images to Cloudinary...`);
       
       for (let i = 0; i < newImages.length; i++) {
         try {
+          console.log(`⏳ Uploading image ${i + 1}/${newImages.length}...`);
+          
           const uploadResult = await cloudinary.uploader.upload(newImages[i], {
             folder: "brightnal_products",
             resource_type: "auto",
             timeout: 60000
           });
+          
           cloudinaryUrls.push(uploadResult.secure_url);
-          console.log(`✅ New image ${i + 1}/${newImages.length} uploaded`);
+          console.log(`✅ Image ${i + 1}/${newImages.length} uploaded successfully`);
         } catch (uploadError) {
           console.error(`❌ Upload error for image ${i + 1}:`, uploadError.message);
         }
       }
+      
+      console.log(`✅ Image upload complete. Total images: ${cloudinaryUrls.length}`);
     }
   }
   
   // Update database
+  console.log("💾 Updating database...");
+  
   const result = await sql`
     UPDATE products
     SET 
@@ -303,54 +204,22 @@ app.put("/api/products/:id", asyncHandler(async (req, res) => {
     RETURNING *
   `;
   
-  console.log(`✅ Product updated: ${name}`);
-  res.json(result[0]);
-}));
-
-// Delete product
-app.delete("/api/products/:id", asyncHandler(async (req, res) => {
-  if (!status.database) {
-    return res.status(503).json({ error: "Database not available. Please try again." });
-  }
+  console.log(`✅ Product updated successfully: ${name}`);
   
-  const { id } = req.params;
-  
-  // Get product
-  const product = await sql`SELECT * FROM products WHERE id = ${id}`;
-  if (product.length === 0) {
-    return res.status(404).json({ error: "Product not found" });
-  }
-  
-  // Delete images from Cloudinary
-  if (product[0].images && product[0].images.length > 0 && status.cloudinary) {
-    console.log(`🗑️  Deleting ${product[0].images.length} images from Cloudinary...`);
-    
-    for (const imageUrl of product[0].images) {
-      try {
-        // Extract public_id from URL
-        const urlParts = imageUrl.split('/');
-        const filename = urlParts[urlParts.length - 1];
-        const publicId = `brightnal_products/${filename.split('.')[0]}`;
-        
-        await cloudinary.uploader.destroy(publicId);
-        console.log(`✅ Image deleted from Cloudinary`);
-      } catch (deleteError) {
-        console.error("❌ Cloudinary delete error:", deleteError.message);
-        // Continue even if image deletion fails
-      }
-    }
-  }
-  
-  // Delete from database
-  await sql`DELETE FROM products WHERE id = ${id}`;
-  
-  console.log(`✅ Product deleted: ${product[0].name}`);
-  res.json({ message: "Product deleted successfully" });
+  res.json({ 
+    success: true,
+    message: `Product "${name}" has been updated successfully!`,
+    productId: id,
+    imagesUploaded: cloudinaryUrls.length
+  });
 }));
 
 // 404 handler
 app.use((req, res) => {
-  res.status(404).json({ error: "Route not found" });
+  res.status(404).json({ 
+    success: false,
+    message: "Route not found. Only PUT /api/products/:id is available." 
+  });
 });
 
 // Error handler
@@ -358,19 +227,31 @@ app.use((err, req, res, next) => {
   console.error("❌ Server Error:", err);
   
   if (err.name === 'PayloadTooLargeError') {
-    return res.status(413).json({ error: "Request too large. Please reduce image sizes." });
+    return res.status(413).json({ 
+      success: false,
+      message: "Request too large. Please reduce image sizes." 
+    });
   }
   
   res.status(500).json({ 
-    error: "Something went wrong!",
-    message: err.message 
+    success: false,
+    message: "Something went wrong while updating the product.",
+    error: err.message 
   });
 });
 
 // Start server
 const PORT = process.env.PORT || 7700;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT} - UPDATE ONLY MODE`);
   console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 API URL: ${PORT === 7700 ? 'http://localhost:7700' : 'https://brightnal.onrender.com'}`);
+  console.log(`⚠️  Only PUT /api/products/:id endpoint is active`);
 });
+
+const response = await fetch(`${API_URL}/api/products/${productId}`, {
+  method: 'PUT',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(productData)
+});
+
