@@ -1,74 +1,56 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Upload Product</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Upload Product</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    .product-list { margin-top: 40px; }
+    .product {
+      border: 1px solid #ddd;
+      padding: 12px;
+      margin-bottom: 12px;
+      display: flex;
+      gap: 16px;
+      align-items: center;
+    }
+    .product img {
+      width: 80px;
+      height: 80px;
+      object-fit: cover;
+      border-radius: 4px;
+    }
+  </style>
 </head>
 <body>
-    <h1>Upload Product</h1>
-    
-    <form id="uploadForm">
-        <div>
-            <label>Product Name:</label>
-            <input type="text" name="productName" required>
-        </div>
-        
-        <div>
-            <label>Category:</label>
-            <input type="text" name="category">
-        </div>
-        
-        <div>
-            <label>Brand:</label>
-            <input type="text" name="brand">
-        </div>
-        
-        <div>
-            <label>Price:</label>
-            <input type="number" name="price" step="0.01">
-        </div>
-        
-        <div>
-            <label>Stock:</label>
-            <input type="number" name="stock">
-        </div>
-        
-        <div>
-            <label>SKU:</label>
-            <input type="text" name="sku">
-        </div>
-        
-        <div>
-            <label>Product Class:</label>
-            <input type="text" name="productClass">
-        </div>
-        
-        <div>
-            <label>Sizes:</label>
-            <input type="text" name="sizes">
-        </div>
-        
-        <div>
-            <label>Colors:</label>
-            <input type="text" name="colors">
-        </div>
-        
-        <div>
-            <label>Description:</label>
-            <textarea name="description"></textarea>
-        </div>
-        
-        <div>
-            <label>Image:</label>
-            <input type="file" name="image" accept="image/*" required>
-        </div>
-        
-        <button type="submit">Upload Product</button>
-    </form>
-    
-    <div id="message"></div>
-    
-    <script src="main.js"></script>
+
+  <h1>Upload Product</h1>
+
+  <form id="uploadForm">
+    <input type="text" name="productName" placeholder="Product Name" required />
+    <input type="text" name="category" placeholder="Category" />
+    <input type="text" name="brand" placeholder="Brand" />
+    <input type="number" name="price" placeholder="Price" step="0.01" />
+    <input type="number" name="stock" placeholder="Stock" />
+    <input type="text" name="sku" placeholder="SKU" />
+    <input type="text" name="productClass" placeholder="Product Class" />
+    <input type="text" name="sizes" placeholder="Sizes" />
+    <input type="text" name="colors" placeholder="Colors" />
+    <textarea name="description" placeholder="Description"></textarea>
+    <input type="file" name="image" accept="image/*" required />
+    <button type="submit">Upload Product</button>
+  </form>
+
+  <div id="message"></div>
+
+  <hr />
+
+  <h2>Products</h2>
+  <button id="loadProductsBtn">Load Products</button>
+
+  <div class="product-list" id="productList"></div>
+
+  <script src="main.js"></script>
 </body>
 </html>

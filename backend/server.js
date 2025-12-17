@@ -8,7 +8,6 @@ import cors from "cors";
 dotenv.config();
 const { Pool } = pkg;
 const app = express();
-
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: true },
@@ -48,7 +47,27 @@ cloudinary.config({
   secure: true,
 });
 
-app.use(cors());
+const allowedOrigins = [
+"https://brightnal-backend.vercel.app"
+];
+
+app.use(
+  cors({
+    origin: function(origin, callback) {
+
+      if (!origin) return callback(null, true);
+      
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      
+      return callback(new Error("Not allowed by CORS"));
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true
+  })
+);
 app.use(express.json());
 app.use(express.static("public"));
 
@@ -123,6 +142,53 @@ app.post("/api/upload", upload.single("image"), async (req, res) => {
     });
   }
 });
+// GET ALL PRODUCTS
+app.get("/api/products", async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT * FROM products ORDER BY created_at DESC"
+    );
+    
+    res.status(200).json({
+      success: true,
+      products: result.rows
+    });
+  } catch (error) {
+    console.error("❌ Fetch products error:", error.message);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch products"
+    });
+  }
+});
+// GET SINGLE PRODUCT
+app.get("/api/products/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
 
+    const result = await pool.query(
+      "SELECT * FROM products WHERE id = $1",
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found"
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      product: result.rows[0]
+    });
+  } catch (error) {
+    console.error("❌ Fetch product error:", error.message);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch product"
+    });
+  }
+});
 const PORT = process.env.PORT || 7700;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
