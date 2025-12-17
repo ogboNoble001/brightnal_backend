@@ -2,7 +2,7 @@ let products = [];
 let currentEditId = null;
 let currentImages = [];
 let currentView = 'grid';
-const API_URL = 'http://localhost:7700/api';
+const API_URL = 'https://brightnal.onrender.com/api';
 
 document.addEventListener('DOMContentLoaded', function() {
     loadProducts();
