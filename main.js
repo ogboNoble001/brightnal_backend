@@ -58,6 +58,32 @@ async function loadProducts() {
     }
 }
 
+/* ---------------- DELETE PRODUCT ---------------- */
+
+async function deleteProduct(productId) {
+    if (!confirm("Are you sure you want to delete this product?")) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${SERVER_URL}/api/products/${productId}`, {
+            method: "DELETE"
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            messageDiv.textContent = "✅ Product deleted successfully!";
+            loadProducts(); // refresh list after deletion
+        } else {
+            messageDiv.textContent = "❌ Delete failed: " + data.message;
+        }
+    } catch (error) {
+        console.error(error);
+        messageDiv.textContent = "❌ Delete error. Check console.";
+    }
+}
+
 /* ---------------- RENDER ---------------- */
 
 function renderProducts(products) {
@@ -79,6 +105,7 @@ function renderProducts(products) {
         ₦${p.price} • Stock: ${p.stock}<br/>
         ${p.category || ""}
       </div>
+      <button class="delete-btn" onclick="deleteProduct(${p.id})">Delete</button>
     `;
         
         productList.appendChild(div);

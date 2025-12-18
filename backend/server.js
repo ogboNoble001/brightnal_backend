@@ -190,5 +190,45 @@ app.get("/api/products/:id", async (req, res) => {
     });
   }
 });
+// DELETE PRODUCT
+app.delete("/api/products/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // First, get the product to retrieve cloudinary_id
+    const productResult = await pool.query(
+      "SELECT cloudinary_id FROM products WHERE id = $1",
+      [id]
+    );
+
+    if (productResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found"
+      });
+    }
+
+    const cloudinaryId = productResult.rows[0].cloudinary_id;
+
+    // Delete from Cloudinary
+    if (cloudinaryId) {
+      await cloudinary.uploader.destroy(cloudinaryId);
+    }
+
+    // Delete from database
+    await pool.query("DELETE FROM products WHERE id = $1", [id]);
+
+    res.status(200).json({
+      success: true,
+      message: "Product deleted successfully"
+    });
+  } catch (error) {
+    console.error("❌ Delete product error:", error.message);
+    res.status(500).json({
+      success: false,
+      message: "Failed to delete product"
+    });
+  }
+});
 const PORT = process.env.PORT || 7700;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
