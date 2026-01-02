@@ -231,5 +231,99 @@ app.delete("/api/products/:id", async (req, res) => {
     });
   }
 });
+// UPDATE PRODUCT
+app.put("/api/products/:id", upload.single("image"), async (req, res) => {
+  let newCloudinaryId = null;
+  let oldCloudinaryId = null;
+
+  try {
+    const { id } = req.params;
+    const { productName, category, brand, price, stock, sku, productClass, sizes, colors, description } = req.body;
+
+    // Get existing product
+    const existingProduct = await pool.query(
+      "SELECT * FROM products WHERE id = $1",
+      [id]
+    );
+
+    if (existingProduct.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Product not found"
+      });
+    }
+
+    let imageUrl = existingProduct.rows[0].image_url;
+    let cloudinaryId = existingProduct.rows[0].cloudinary_id;
+
+    // If new image uploaded, update Cloudinary
+    if (req.file) {
+      oldCloudinaryId = cloudinaryId;
+
+      const cloudinaryResult = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { folder: "myAppUploads", tags: ["myApp"], resource_type: "image" },
+          (error, result) => (error ? reject(error) : resolve(result))
+        );
+        stream.end(req.file.buffer);
+      });
+
+      newCloudinaryId = cloudinaryResult.public_id;
+      imageUrl = cloudinaryResult.secure_url;
+      cloudinaryId = cloudinaryResult.public_id;
+
+      // Delete old image from Cloudinary
+      if (oldCloudinaryId) {
+        await cloudinary.uploader.destroy(oldCloudinaryId);
+      }
+    }
+
+    // Update database
+    const query = `
+      UPDATE products 
+      SET product_name = $1, category = $2, brand = $3, price = $4, 
+          stock = $5, sku = $6, product_class = $7, sizes = $8, 
+          colors = $9, description = $10, image_url = $11, cloudinary_id = $12
+      WHERE id = $13
+      RETURNING *;
+    `;
+
+    const values = [
+      productName || existingProduct.rows[0].product_name,
+      category || existingProduct.rows[0].category,
+      brand || existingProduct.rows[0].brand,
+      price ? parseFloat(price) : existingProduct.rows[0].price,
+      stock ? parseInt(stock) : existingProduct.rows[0].stock,
+      sku || existingProduct.rows[0].sku,
+      productClass || existingProduct.rows[0].product_class,
+      sizes || existingProduct.rows[0].sizes,
+      colors || existingProduct.rows[0].colors,
+      description || existingProduct.rows[0].description,
+      imageUrl,
+      cloudinaryId,
+      id
+    ];
+
+    const result = await pool.query(query, values);
+
+    res.status(200).json({
+      success: true,
+      product: result.rows[0],
+      message: "Product updated successfully"
+    });
+  } catch (error) {
+    console.error("❌ Update error:", error.message);
+
+    // Rollback: if new image was uploaded but update failed, delete it
+    if (newCloudinaryId) {
+      await cloudinary.uploader.destroy(newCloudinaryId);
+    }
+
+    res.status(500).json({
+      success: false,
+      message: error.message || "Update failed"
+    });
+  }
+});
 const PORT = process.env.PORT || 7700;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
