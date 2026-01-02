@@ -34,35 +34,35 @@
       background: #c82333;
     }
     .update-btn {
-  background: #2196F3;
-  color: white;
-  border: none;
-  padding: 8px 16px;
-  cursor: pointer;
-  margin-right: 5px;
-}
-
-.update-btn:hover {
-  background: #0b7dda;
-}
+      background: #2196F3;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-right: 5px;
+    }
+    .update-btn:hover {
+      background: #0b7dda;
+    }
   </style>
 </head>
 <body>
 
-  <h1>Upload Product</h1>
+  <h2>Upload Product</h2>
 
   <form id="uploadForm">
-    <input type="text" name="productName" placeholder="Product Name" required />
-    <input type="text" name="category" placeholder="Category" />
-    <input type="text" name="brand" placeholder="Brand" />
-    <input type="number" name="price" placeholder="Price" step="0.01" />
-    <input type="number" name="stock" placeholder="Stock" />
-    <input type="text" name="sku" placeholder="SKU" />
-    <input type="text" name="productClass" placeholder="Product Class" />
-    <input type="text" name="sizes" placeholder="Sizes" />
-    <input type="text" name="colors" placeholder="Colors" />
-    <textarea name="description" placeholder="Description"></textarea>
-    <input type="file" name="image" accept="image/*" required />
+    <input type="text" id="productName" name="productName" placeholder="Product Name" required />
+    <input type="text" id="category" name="category" placeholder="Category" />
+    <input type="text" id="brand" name="brand" placeholder="Brand" />
+    <input type="number" id="price" name="price" placeholder="Price" step="0.01" />
+    <input type="number" id="stock" name="stock" placeholder="Stock" />
+    <input type="text" id="sku" name="sku" placeholder="SKU" />
+    <input type="text" id="productClass" name="productClass" placeholder="Product Class" />
+    <input type="text" id="sizes" name="sizes" placeholder="Sizes" />
+    <input type="text" id="colors" name="colors" placeholder="Colors" />
+    <textarea id="description" name="description" placeholder="Description"></textarea>
+    <input type="file" name="image" accept="image/*" />
     <button type="submit">Upload Product</button>
   </form>
 
@@ -78,4 +78,3 @@
   <script src="main.js"></script>
 </body>
 </html>
-
