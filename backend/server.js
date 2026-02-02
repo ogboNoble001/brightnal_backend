@@ -30,7 +30,7 @@ requiredEnvVars.forEach(varName => {
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const { Pool } = pkg;
 const app = express();
-
+app.set("trust proxy", 1);
 // Database pool
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
