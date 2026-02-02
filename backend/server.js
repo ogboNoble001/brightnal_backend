@@ -40,6 +40,29 @@ const createProductsTable = async () => {
 };
 createProductsTable();
 
+// CREATE USERS TABLE
+const createUsersTable = async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        google_id TEXT UNIQUE,
+        email TEXT UNIQUE NOT NULL,
+        full_name TEXT,
+        avatar_url TEXT,
+        password_hash TEXT,        -- for email/password signups
+        auth_provider TEXT DEFAULT 'google',  -- 'google' or 'email'
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    console.log("✅ Users table ready");
+  } catch (err) {
+    console.error("❌ Users table error:", err.message);
+  }
+};
+
+createUsersTable();
+
 cloudinary.config({
   cloud_name: process.env.CLOUD_NAME,
   api_key: process.env.CLOUD_KEY,
