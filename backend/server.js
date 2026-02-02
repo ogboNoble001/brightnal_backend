@@ -7,8 +7,8 @@ import cors from "cors";
 import { OAuth2Client } from "google-auth-library";
 import jwt from "jsonwebtoken";
 
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 dotenv.config();
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const { Pool } = pkg;
 const app = express();
 const pool = new Pool({
