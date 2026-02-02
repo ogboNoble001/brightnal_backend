@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import pkg from "pg";
 import cors from "cors";
 import { OAuth2Client } from "google-auth-library";
+import jwt from "jsonwebtoken";
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 dotenv.config();
@@ -354,26 +355,26 @@ app.put("/api/products/:id", upload.single("image"), async (req, res) => {
 app.post("/api/auth/google", async (req, res) => {
   try {
     const { token } = req.body;
-
+    
     if (!token) {
       return res.status(400).json({ success: false, message: "No token provided" });
     }
-
+    
     // Verify token with Google
     const ticket = await googleClient.verifyIdToken({
       idToken: token,
       audience: process.env.GOOGLE_CLIENT_ID,
     });
-
+    
     const payload = ticket.getPayload();
     const { sub: google_id, email, name: full_name, picture: avatar_url } = payload;
-
+    
     // Check if user exists
     let user = await pool.query(
       "SELECT * FROM users WHERE google_id = $1 OR email = $2",
       [google_id, email]
     );
-
+    
     if (user.rows.length === 0) {
       // Create new user
       const result = await pool.query(
@@ -383,18 +384,22 @@ app.post("/api/auth/google", async (req, res) => {
       );
       user = result;
     }
-
+    
+    // ✅ Generate JWT after login
+    const jwtPayload = { id: user.rows[0].id, email: user.rows[0].email };
+    const jwtToken = jwt.sign(jwtPayload, process.env.JWT_SECRET, { expiresIn: "7d" });
+    
     res.status(200).json({
       success: true,
       user: user.rows[0],
+      token: jwtToken, // <-- send JWT to frontend
       message: "Login successful",
     });
-
+    
   } catch (err) {
     console.error("❌ Google auth error:", err.message);
     res.status(500).json({ success: false, message: "Authentication failed" });
   }
 });
-
 const PORT = process.env.PORT || 7700;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
