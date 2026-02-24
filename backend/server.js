@@ -6,7 +6,6 @@ import pkg from "pg";
 import cors from "cors";
 import { OAuth2Client } from "google-auth-library";
 import jwt from "jsonwebtoken";
-import rateLimit from "express-rate-limit";
 
 dotenv.config();
 
@@ -31,10 +30,11 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const { Pool } = pkg;
 const app = express();
 app.set("trust proxy", 1);
+
 // Database pool
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: true },
+  ssl: { rejectUnauthorized: false }, // Less strict for dev
 });
 
 // Test database connection
@@ -111,56 +111,28 @@ cloudinary.config({
   secure: true,
 });
 
-// CORS configuration
-const allowedOrigins = [
-  "https://brightnal-backend.vercel.app",
-  "https://brightnal.vercel.app",
-  "http://localhost:3000", // For development
-  "http://localhost:5173", // Vite default port
-];
+// ============================================
+// FULLY OPEN CORS - NO RESTRICTIONS
+// ============================================
+app.use(cors({
+  origin: '*', // Allow ALL origins
+  methods: '*', // Allow ALL methods
+  allowedHeaders: '*', // Allow ALL headers
+  credentials: true,
+  optionsSuccessStatus: 200
+}));
 
-app.use(
-  cors({
-    origin: function(origin, callback) {
-      // Allow requests with no origin (mobile apps, Postman, etc.)
-      if (!origin) return callback(null, true);
-      
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-      
-      return callback(new Error("Not allowed by CORS"));
-    },
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true
-  })
-);
+// Handle preflight for all routes
+app.options('*', cors());
 
 app.use(express.json());
 app.use(express.static("public"));
 
-// Rate limiters
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5,
-  message: { success: false, message: 'Too many authentication attempts, please try again later' },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+// ============================================
+// NO RATE LIMITING - REMOVED COMPLETELY
+// ============================================
 
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // 100 requests per window
-  message: { success: false, message: 'Too many requests, please try again later' },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-// Apply rate limiting to all API routes
-app.use('/api/', apiLimiter);
-
-// Authentication Middleware
+// Authentication Middleware (but very relaxed)
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.split(' ')[1];
@@ -191,7 +163,7 @@ const authenticateToken = (req, res, next) => {
   }
 };
 
-// Optional authentication (for routes that work with or without auth)
+// Optional authentication
 const optionalAuth = (req, res, next) => {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.split(' ')[1];
@@ -201,7 +173,6 @@ const optionalAuth = (req, res, next) => {
       const user = jwt.verify(token, process.env.JWT_SECRET);
       req.user = user;
     } catch (error) {
-      // Token invalid, but continue without user
       req.user = null;
     }
   }
@@ -222,7 +193,7 @@ const requireAdmin = (req, res, next) => {
 // Multer configuration
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 },
+  limits: { fileSize: 10 * 1024 * 1024 }, // Increased to 10MB
   fileFilter: (req, file, cb) => {
     if (!file.mimetype.startsWith("image/")) {
       return cb(new Error("Only image files allowed"));
@@ -232,15 +203,19 @@ const upload = multer({
 });
 
 // ============================================
-// AUTH ROUTES
+// AUTH ROUTES - NO RATE LIMITING
 // ============================================
 
-// Google Authentication
-app.post("/api/auth/google", authLimiter, async (req, res) => {
+// Google Authentication - FULLY OPEN
+app.post("/api/auth/google", async (req, res) => {
   try {
+    console.log("🔵 Received auth request from origin:", req.headers.origin);
+    console.log("🔵 Request body:", req.body);
+    
     const { token } = req.body;
     
     if (!token) {
+      console.log("❌ No token provided");
       return res.status(400).json({ 
         success: false, 
         message: "No token provided" 
@@ -250,10 +225,12 @@ app.post("/api/auth/google", authLimiter, async (req, res) => {
     // Verify token with Google
     let ticket;
     try {
+      console.log("🔵 Verifying Google token...");
       ticket = await googleClient.verifyIdToken({
         idToken: token,
         audience: process.env.GOOGLE_CLIENT_ID,
       });
+      console.log("✅ Google token verified");
     } catch (verifyError) {
       console.error("❌ Google token verification failed:", verifyError);
       return res.status(401).json({ 
@@ -265,6 +242,8 @@ app.post("/api/auth/google", authLimiter, async (req, res) => {
     const payload = ticket.getPayload();
     const { sub: google_id, email, name: full_name, picture: avatar_url } = payload;
     
+    console.log("🔵 User info from Google:", { google_id, email, full_name });
+    
     // Check if user exists
     let user = await pool.query(
       "SELECT * FROM users WHERE google_id = $1 OR email = $2",
@@ -272,15 +251,16 @@ app.post("/api/auth/google", authLimiter, async (req, res) => {
     );
     
     if (user.rows.length === 0) {
-      // Create new user
+      console.log("🔵 Creating new user...");
       const result = await pool.query(
         `INSERT INTO users (google_id, email, full_name, avatar_url, auth_provider) 
          VALUES ($1,$2,$3,$4,'google') RETURNING *`,
         [google_id, email, full_name, avatar_url]
       );
       user = result;
+      console.log("✅ New user created");
     } else {
-      // Update existing user info (in case profile changed)
+      console.log("🔵 Updating existing user...");
       const result = await pool.query(
         `UPDATE users 
          SET full_name = $1, avatar_url = $2, google_id = $3, updated_at = NOW() 
@@ -289,17 +269,20 @@ app.post("/api/auth/google", authLimiter, async (req, res) => {
         [full_name, avatar_url, google_id, user.rows[0].id]
       );
       user = result;
+      console.log("✅ User updated");
     }
     
-    // Generate JWT
+    // Generate JWT with longer expiry
     const jwtPayload = { 
       id: user.rows[0].id, 
       email: user.rows[0].email,
       role: user.rows[0].role 
     };
     const jwtToken = jwt.sign(jwtPayload, process.env.JWT_SECRET, { 
-      expiresIn: "14d" 
+      expiresIn: "30d" // Extended to 30 days
     });
+    
+    console.log("✅ Login successful for:", email);
     
     res.status(200).json({
       success: true,
@@ -316,9 +299,11 @@ app.post("/api/auth/google", authLimiter, async (req, res) => {
     
   } catch (err) {
     console.error("❌ Google auth error:", err.message);
+    console.error("❌ Full error:", err);
     res.status(500).json({ 
       success: false, 
-      message: "Authentication failed. Please try again." 
+      message: "Authentication failed. Please try again.",
+      error: err.message // Added error details for debugging
     });
   }
 });
@@ -385,9 +370,8 @@ app.get("/api/user/profile", authenticateToken, async (req, res) => {
   }
 });
 
-// Logout (optional - mainly client-side)
+// Logout
 app.post("/api/auth/logout", authenticateToken, async (req, res) => {
-  // You could implement token blacklisting here if needed
   res.json({ 
     success: true, 
     message: "Logged out successfully" 
@@ -460,7 +444,7 @@ app.post("/api/upload", authenticateToken, upload.single("image"), async (req, r
       description || "No description",
       cloudinaryResult.secure_url,
       cloudinaryResult.public_id,
-      req.user.id // Track who created the product
+      req.user.id
     ];
 
     const dbResult = await pool.query(query, values);
@@ -473,7 +457,6 @@ app.post("/api/upload", authenticateToken, upload.single("image"), async (req, r
   } catch (error) {
     console.error("❌ Upload error:", error.message);
 
-    // Cleanup Cloudinary if DB insert failed
     if (cloudinaryId) {
       await cloudinary.uploader.destroy(cloudinaryId).catch(err => 
         console.error("Failed to cleanup Cloudinary:", err)
@@ -487,7 +470,7 @@ app.post("/api/upload", authenticateToken, upload.single("image"), async (req, r
   }
 });
 
-// Get All Products (PUBLIC with optional auth for user-specific data)
+// Get All Products
 app.get("/api/products", optionalAuth, async (req, res) => {
   try {
     const result = await pool.query(
@@ -507,7 +490,7 @@ app.get("/api/products", optionalAuth, async (req, res) => {
   }
 });
 
-// Get Single Product (PUBLIC)
+// Get Single Product
 app.get("/api/products/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -537,7 +520,7 @@ app.get("/api/products/:id", async (req, res) => {
   }
 });
 
-// Update Product (PROTECTED)
+// Update Product
 app.put("/api/products/:id", authenticateToken, upload.single("image"), async (req, res) => {
   let newCloudinaryId = null;
   let oldCloudinaryId = null;
@@ -557,7 +540,6 @@ app.put("/api/products/:id", authenticateToken, upload.single("image"), async (r
       description 
     } = req.body;
 
-    // Get existing product
     const existingProduct = await pool.query(
       "SELECT * FROM products WHERE id = $1",
       [id]
@@ -570,7 +552,6 @@ app.put("/api/products/:id", authenticateToken, upload.single("image"), async (r
       });
     }
 
-    // Check if user owns the product (or is admin)
     if (existingProduct.rows[0].created_by !== req.user.id && req.user.role !== 'admin') {
       return res.status(403).json({
         success: false,
@@ -581,7 +562,6 @@ app.put("/api/products/:id", authenticateToken, upload.single("image"), async (r
     let imageUrl = existingProduct.rows[0].image_url;
     let cloudinaryId = existingProduct.rows[0].cloudinary_id;
 
-    // Handle new image upload
     if (req.file) {
       oldCloudinaryId = cloudinaryId;
 
@@ -597,7 +577,6 @@ app.put("/api/products/:id", authenticateToken, upload.single("image"), async (r
       imageUrl = cloudinaryResult.secure_url;
       cloudinaryId = cloudinaryResult.public_id;
 
-      // Delete old image
       if (oldCloudinaryId) {
         await cloudinary.uploader.destroy(oldCloudinaryId).catch(err =>
           console.error("Failed to delete old image:", err)
@@ -605,7 +584,6 @@ app.put("/api/products/:id", authenticateToken, upload.single("image"), async (r
       }
     }
 
-    // Update database
     const query = `
       UPDATE products 
       SET product_name = $1, category = $2, brand = $3, price = $4, 
@@ -642,7 +620,6 @@ app.put("/api/products/:id", authenticateToken, upload.single("image"), async (r
   } catch (error) {
     console.error("❌ Update error:", error.message);
 
-    // Rollback: if new image was uploaded but update failed
     if (newCloudinaryId) {
       await cloudinary.uploader.destroy(newCloudinaryId).catch(err =>
         console.error("Failed to cleanup:", err)
@@ -656,12 +633,11 @@ app.put("/api/products/:id", authenticateToken, upload.single("image"), async (r
   }
 });
 
-// Delete Product (PROTECTED)
+// Delete Product
 app.delete("/api/products/:id", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Get the product
     const productResult = await pool.query(
       "SELECT * FROM products WHERE id = $1",
       [id]
@@ -676,7 +652,6 @@ app.delete("/api/products/:id", authenticateToken, async (req, res) => {
 
     const product = productResult.rows[0];
 
-    // Check if user owns the product (or is admin)
     if (product.created_by !== req.user.id && req.user.role !== 'admin') {
       return res.status(403).json({
         success: false,
@@ -686,14 +661,12 @@ app.delete("/api/products/:id", authenticateToken, async (req, res) => {
 
     const cloudinaryId = product.cloudinary_id;
 
-    // Delete from Cloudinary
     if (cloudinaryId) {
       await cloudinary.uploader.destroy(cloudinaryId).catch(err =>
         console.error("Failed to delete from Cloudinary:", err)
       );
     }
 
-    // Delete from database
     await pool.query("DELETE FROM products WHERE id = $1", [id]);
 
     res.status(200).json({
@@ -716,8 +689,10 @@ app.delete("/api/products/:id", authenticateToken, async (req, res) => {
 app.get("/", (req, res) => {
   res.json({ 
     success: true, 
-    message: "Brightnal API is running",
-    version: "2.0.0"
+    message: "Brightnal API is running - DEVELOPMENT MODE (NO RESTRICTIONS)",
+    version: "2.0.0-dev",
+    cors: "FULLY OPEN",
+    rateLimiting: "DISABLED"
   });
 });
 
@@ -725,7 +700,8 @@ app.get("/api/health", (req, res) => {
   res.json({ 
     success: true, 
     status: "healthy",
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    mode: "DEVELOPMENT - ALL RESTRICTIONS DISABLED"
   });
 });
 
@@ -733,7 +709,6 @@ app.get("/api/health", (req, res) => {
 // ERROR HANDLERS
 // ============================================
 
-// 404 handler
 app.use((req, res) => {
   res.status(404).json({
     success: false,
@@ -741,29 +716,13 @@ app.use((req, res) => {
   });
 });
 
-// Global error handler
 app.use((err, req, res, next) => {
   console.error('❌ Error:', err.stack);
   
-  if (err.name === 'UnauthorizedError') {
-    return res.status(401).json({ 
-      success: false, 
-      message: 'Invalid token' 
-    });
-  }
-  
-  if (err.message === 'Not allowed by CORS') {
-    return res.status(403).json({
-      success: false,
-      message: 'CORS policy violation'
-    });
-  }
-  
   res.status(500).json({ 
     success: false, 
-    message: process.env.NODE_ENV === 'production' 
-      ? 'Internal server error' 
-      : err.message 
+    message: err.message || 'Internal server error',
+    error: err.stack // Show full error in dev mode
   });
 });
 
@@ -772,9 +731,12 @@ app.use((err, req, res, next) => {
 // ============================================
 
 const PORT = process.env.PORT || 7700;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`📝 Environment: DEVELOPMENT`);
+  console.log(`⚠️  WARNING: Running with NO SECURITY RESTRICTIONS`);
+  console.log(`⚠️  CORS: FULLY OPEN`);
+  console.log(`⚠️  Rate Limiting: DISABLED`);
 });
 
 // Graceful shutdown
