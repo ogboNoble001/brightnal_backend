@@ -171,7 +171,7 @@ async function deleteProduct(productId) {
 
 function renderProducts(products) {
   if (!products.length) {
-    productList.innerHTML = "<p>No products found.</p>";
+    productList.innerHTML = "<p>No product found.</p>";
     return;
   }
 
