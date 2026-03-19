@@ -132,7 +132,7 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (allowedOrigins.includes(origin)) {
+      if (!origin || allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
       return callback(new Error("Not allowed by CORS"));
@@ -548,7 +548,7 @@ app.put("/api/products/:id", upload.single("image"), async (req, res) => {
        SET product_name = $1, category = $2, brand = $3, price = $4,
            stock = $5, sku = $6, product_class = $7, sizes = $8,
            colors = $9, description = $10, image_url = $11,
-           cloudinary_id = $12, updated_at = NOW()
+           cloudinary_id = $12
        WHERE id = $13
        RETURNING *`,
       [
