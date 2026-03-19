@@ -7,61 +7,7 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: Arial, sans-serif; padding: 24px; background: #f5f5f5; }
-
     h2 { margin-bottom: 16px; }
-
-    /* ---- AUTH ---- */
-    #authSection {
-      max-width: 400px;
-      background: white;
-      padding: 24px;
-      border-radius: 8px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-      margin-bottom: 32px;
-    }
-    #authSection input {
-      display: block;
-      width: 100%;
-      padding: 10px;
-      margin-bottom: 10px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      font-size: 14px;
-    }
-    #authSection button {
-      width: 100%;
-      padding: 10px;
-      margin-bottom: 8px;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: 600;
-    }
-    #loginBtn  { background: #333; color: white; }
-    #registerBtn { background: white; color: #333; border: 1px solid #333 !important; }
-    #logoutBtn {
-      background: #dc3545;
-      color: white;
-      border: none;
-      padding: 8px 20px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 14px;
-    }
-
-    #authStatus {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 24px;
-      padding: 12px 16px;
-      background: #e6f4ea;
-      border-radius: 6px;
-      font-size: 14px;
-    }
-
-    /* ---- PRODUCT FORM ---- */
     #productSection {
       background: white;
       padding: 24px;
@@ -102,14 +48,7 @@
       margin-left: 8px;
       display: none;
     }
-
-    #message {
-      margin-top: 12px;
-      font-size: 14px;
-      min-height: 20px;
-    }
-
-    /* ---- PRODUCTS ---- */
+    #message { margin-top: 12px; font-size: 14px; min-height: 20px; }
     .product-list { margin-top: 8px; }
     .product {
       border: 1px solid #ddd;
@@ -150,25 +89,7 @@
 </head>
 <body>
 
-  <!-- AUTH: shown when logged out -->
-  <div id="authSection">
-    <h2>Admin Login</h2>
-    <input type="text"     id="authName"     placeholder="Full name (register only)" />
-    <input type="email"    id="authEmail"    placeholder="Email" />
-    <input type="password" id="authPassword" placeholder="Password" />
-    <button id="loginBtn">Login</button>
-    <button id="registerBtn">Register</button>
-    <div id="authMessage" style="margin-top:8px;font-size:13px;"></div>
-  </div>
-
-  <!-- STATUS: shown when logged in -->
-  <div id="authStatus" style="display:none;">
-    <span id="loggedInAs"></span>
-    <button id="logoutBtn">Logout</button>
-  </div>
-
-  <!-- PRODUCT FORM: shown when logged in -->
-  <div id="productSection" style="display:none;">
+  <div id="productSection">
     <h2 id="formTitle">Upload Product</h2>
     <form id="uploadForm">
       <input type="text"   id="productName"  name="productName"  placeholder="Product Name *" required />
@@ -181,8 +102,8 @@
       <input type="text"   id="sizes"        name="sizes"        placeholder="Sizes (e.g. S, M, L)" />
       <input type="text"   id="colors"       name="colors"       placeholder="Colors" />
       <textarea id="description" name="description" placeholder="Description"></textarea>
-      <input type="file"   id="imageInput"   name="image" accept="image/*" />
-      <div style="margin-top:4px;">
+      <input type="file" id="imageInput" name="image" accept="image/*" />
+      <div style="margin-top: 4px;">
         <button type="submit" id="submitBtn">Upload Product</button>
         <button type="button" id="cancelUpdateBtn">Cancel</button>
       </div>
@@ -190,11 +111,17 @@
     <div id="message"></div>
   </div>
 
-  <!-- PRODUCTS LIST -->
-  <div id="productsArea" style="display:none;">
-    <h2>Products</h2>
-    <div class="product-list" id="productList"></div>
-  </div>
+  <hr style="margin-bottom: 24px;" />
+
+  <h2>Products</h2>
+  <button id="loadProductsBtn" style="
+    margin-bottom: 16px; padding: 8px 20px;
+    background: #333; color: white;
+    border: none; border-radius: 4px;
+    cursor: pointer; font-size: 14px;
+  ">Load Products</button>
+
+  <div class="product-list" id="productList"></div>
 
   <script src="main.js"></script>
 </body>
