@@ -125,15 +125,13 @@ app.use(express.static("public"));
 // ============================================
 
 const allowedOrigins = [
-  "https://brightnal.vercel.app",
-  "http://localhost:3000",
-  "http://localhost:5173",
+  "https://brightnal-backend.vercel.app",
 ];
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
       return callback(new Error("Not allowed by CORS"));
@@ -438,7 +436,7 @@ app.get("/api/products/:id", async (req, res) => {
 });
 
 // CREATE product (PROTECTED)
-app.post("/api/products", authenticateToken, upload.single("image"), async (req, res) => {
+app.post("/api/products", upload.single("image"), async (req, res) => {
   let cloudinaryId = null;
 
   try {
@@ -469,8 +467,8 @@ app.post("/api/products", authenticateToken, upload.single("image"), async (req,
     const result = await pool.query(
       `INSERT INTO products 
         (product_name, category, brand, price, stock, sku, product_class, 
-         sizes, colors, description, image_url, cloudinary_id, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         sizes, colors, description, image_url, cloudinary_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
        RETURNING *`,
       [
         productName.trim(),
@@ -485,7 +483,6 @@ app.post("/api/products", authenticateToken, upload.single("image"), async (req,
         description?.trim() || "No description",
         cloudinaryResult.secure_url,
         cloudinaryResult.public_id,
-        req.user.id,
       ]
     );
 
@@ -501,8 +498,8 @@ app.post("/api/products", authenticateToken, upload.single("image"), async (req,
   }
 });
 
-// UPDATE product (PROTECTED)
-app.put("/api/products/:id", authenticateToken, upload.single("image"), async (req, res) => {
+// UPDATE product (PUBLIC)
+app.put("/api/products/:id", upload.single("image"), async (req, res) => {
   let newCloudinaryId = null;
 
   try {
@@ -518,11 +515,6 @@ app.put("/api/products/:id", authenticateToken, upload.single("image"), async (r
     }
 
     const product = existing.rows[0];
-
-    // Only owner or admin can update
-    if (product.created_by !== req.user.id && req.user.role !== "admin") {
-      return res.status(403).json({ success: false, message: "Permission denied" });
-    }
 
     const {
       productName,
@@ -587,8 +579,8 @@ app.put("/api/products/:id", authenticateToken, upload.single("image"), async (r
   }
 });
 
-// DELETE product (PROTECTED)
-app.delete("/api/products/:id", authenticateToken, async (req, res) => {
+// DELETE product (PUBLIC)
+app.delete("/api/products/:id", async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     if (isNaN(id)) {
@@ -602,10 +594,6 @@ app.delete("/api/products/:id", authenticateToken, async (req, res) => {
     }
 
     const product = result.rows[0];
-
-    if (product.created_by !== req.user.id && req.user.role !== "admin") {
-      return res.status(403).json({ success: false, message: "Permission denied" });
-    }
 
     await pool.query("DELETE FROM products WHERE id = $1", [id]);
     await deleteFromCloudinary(product.cloudinary_id);
