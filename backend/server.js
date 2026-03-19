@@ -4,106 +4,106 @@ import { v2 as cloudinary } from "cloudinary";
 import dotenv from "dotenv";
 import pkg from "pg";
 import cors from "cors";
-import { OAuth2Client } from "google-auth-library";
 import jwt from "jsonwebtoken";
 import rateLimit from "express-rate-limit";
+import bcrypt from "bcrypt";
 
 dotenv.config();
 
-// Validate required environment variables
+// ============================================
+// ENV VALIDATION
+// ============================================
+
 const requiredEnvVars = [
-  'DATABASE_URL',
-  'GOOGLE_CLIENT_ID',
-  'JWT_SECRET',
-  'CLOUD_NAME',
-  'CLOUD_KEY',
-  'CLOUD_SECRET'
+  "DATABASE_URL",
+  "JWT_SECRET",
+  "CLOUD_NAME",
+  "CLOUD_KEY",
+  "CLOUD_SECRET",
 ];
 
-requiredEnvVars.forEach(varName => {
+requiredEnvVars.forEach((varName) => {
   if (!process.env[varName]) {
     console.error(`❌ Missing required environment variable: ${varName}`);
     process.exit(1);
   }
 });
 
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+// ============================================
+// DATABASE
+// ============================================
+
 const { Pool } = pkg;
-const app = express();
-app.set("trust proxy", 1);
-// Database pool
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: true },
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
 });
 
-// Test database connection
-pool.query('SELECT NOW()', (err, res) => {
+pool.query("SELECT NOW()", (err) => {
   if (err) {
-    console.error('❌ Database connection failed:', err);
+    console.error("❌ Database connection failed:", err.message);
   } else {
-    console.log('✅ Database connected successfully');
+    console.log("✅ Database connected");
   }
 });
 
-// Create tables
-const createProductsTable = async () => {
+// ============================================
+// TABLE SETUP
+// ============================================
+
+const initTables = async () => {
   try {
+    // Users first (products references it)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        full_name TEXT,
+        password_hash TEXT NOT NULL,
+        role TEXT DEFAULT 'customer' CHECK (role IN ('customer', 'admin')),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    console.log("✅ Users table ready");
+
     await pool.query(`
       CREATE TABLE IF NOT EXISTS products (
         id SERIAL PRIMARY KEY,
-        product_name TEXT,
-        category TEXT,
-        brand TEXT,
-        price NUMERIC(12,2) DEFAULT 0,
-        stock INT DEFAULT 0,
+        product_name TEXT NOT NULL,
+        category TEXT DEFAULT 'Uncategorized',
+        brand TEXT DEFAULT 'Unknown',
+        price NUMERIC(12,2) DEFAULT 0 CHECK (price >= 0),
+        stock INT DEFAULT 0 CHECK (stock >= 0),
         sku TEXT,
-        product_class TEXT,
-        sizes TEXT,
-        colors TEXT,
-        description TEXT,
+        product_class TEXT DEFAULT 'Standard',
+        sizes TEXT DEFAULT 'N/A',
+        colors TEXT DEFAULT 'N/A',
+        description TEXT DEFAULT 'No description',
         image_url TEXT NOT NULL,
         cloudinary_id TEXT NOT NULL,
-        created_by INT REFERENCES users(id),
+        created_by INT REFERENCES users(id) ON DELETE SET NULL,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       )
     `);
     console.log("✅ Products table ready");
   } catch (err) {
-    console.error("❌ Products table error:", err.message);
+    console.error("❌ Table init error:", err.message);
+    process.exit(1);
   }
 };
 
-const createUsersTable = async () => {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        google_id TEXT UNIQUE,
-        email TEXT UNIQUE NOT NULL,
-        full_name TEXT,
-        avatar_url TEXT,
-        password_hash TEXT,
-        auth_provider TEXT DEFAULT 'google',
-        role TEXT DEFAULT 'customer',
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
-    console.log("✅ Users table ready");
-  } catch (err) {
-    console.error("❌ Users table error:", err.message);
-  }
-};
+await initTables();
 
-// Initialize tables
-(async () => {
-  await createUsersTable();
-  await createProductsTable();
-})();
+// ============================================
+// CLOUDINARY
+// ============================================
 
-// Cloudinary configuration
 cloudinary.config({
   cloud_name: process.env.CLOUD_NAME,
   api_key: process.env.CLOUD_KEY,
@@ -111,601 +111,509 @@ cloudinary.config({
   secure: true,
 });
 
-// CORS configuration
+// ============================================
+// APP SETUP
+// ============================================
+
+const app = express();
+app.set("trust proxy", 1);
+app.use(express.json({ limit: "10kb" }));
+app.use(express.static("public"));
+
+// ============================================
+// CORS
+// ============================================
+
 const allowedOrigins = [
-  "https://brightnal-backend.vercel.app",
   "https://brightnal.vercel.app",
-  "http://localhost:3000", // For development
-  "http://localhost:5173", // Vite default port
+  "http://localhost:3000",
+  "http://localhost:5173",
 ];
 
 app.use(
   cors({
-    origin: function(origin, callback) {
-      // Allow requests with no origin (mobile apps, Postman, etc.)
-      if (!origin) return callback(null, true);
-      
-      if (allowedOrigins.includes(origin)) {
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
-      
       return callback(new Error("Not allowed by CORS"));
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true
+    credentials: true,
   })
 );
 
-app.use(express.json());
-app.use(express.static("public"));
+// ============================================
+// RATE LIMITERS
+// ============================================
 
-// Rate limiters
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5,
-  message: { success: false, message: 'Too many authentication attempts, please try again later' },
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { success: false, message: "Too many attempts, try again later" },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // 100 requests per window
-  message: { success: false, message: 'Too many requests, please try again later' },
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: { success: false, message: "Too many requests, try again later" },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-// Apply rate limiting to all API routes
-app.use('/api/', apiLimiter);
+app.use("/api/", apiLimiter);
 
-// Authentication Middleware
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split(' ')[1];
+// ============================================
+// MULTER
+// ============================================
 
-  if (!token) {
-    return res.status(401).json({ 
-      success: false, 
-      message: 'Access token required' 
-    });
-  }
-
-  try {
-    const user = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = user;
-    next();
-  } catch (error) {
-    if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Token expired',
-        expired: true 
-      });
-    }
-    return res.status(403).json({ 
-      success: false, 
-      message: 'Invalid token' 
-    });
-  }
-};
-
-// Optional authentication (for routes that work with or without auth)
-const optionalAuth = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (token) {
-    try {
-      const user = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = user;
-    } catch (error) {
-      // Token invalid, but continue without user
-      req.user = null;
-    }
-  }
-  next();
-};
-
-// Admin middleware
-const requireAdmin = (req, res, next) => {
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({
-      success: false,
-      message: 'Admin access required'
-    });
-  }
-  next();
-};
-
-// Multer configuration
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (!file.mimetype.startsWith("image/")) {
-      return cb(new Error("Only image files allowed"));
+      return cb(new Error("Only image files are allowed"));
     }
     cb(null, true);
   },
 });
 
 // ============================================
+// MIDDLEWARE
+// ============================================
+
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.split(" ")[1];
+
+  if (!token) {
+    return res.status(401).json({ success: false, message: "Access token required" });
+  }
+
+  try {
+    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    next();
+  } catch (error) {
+    if (error.name === "TokenExpiredError") {
+      return res.status(401).json({ success: false, message: "Token expired", expired: true });
+    }
+    return res.status(403).json({ success: false, message: "Invalid token" });
+  }
+};
+
+const requireAdmin = (req, res, next) => {
+  if (req.user?.role !== "admin") {
+    return res.status(403).json({ success: false, message: "Admin access required" });
+  }
+  next();
+};
+
+// ============================================
+// HELPERS
+// ============================================
+
+const uploadToCloudinary = (buffer) => {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder: "brightnal", tags: ["brightnal"], resource_type: "image" },
+      (error, result) => (error ? reject(error) : resolve(result))
+    );
+    stream.end(buffer);
+  });
+};
+
+const deleteFromCloudinary = async (publicId) => {
+  if (!publicId) return;
+  try {
+    await cloudinary.uploader.destroy(publicId);
+  } catch (err) {
+    console.error("⚠️ Cloudinary delete failed:", err.message);
+  }
+};
+
+// ============================================
 // AUTH ROUTES
 // ============================================
 
-// Google Authentication
-app.post("/api/auth/google", authLimiter, async (req, res) => {
+// Register
+app.post("/api/auth/register", authLimiter, async (req, res) => {
   try {
-    const { token } = req.body;
-    
-    if (!token) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "No token provided" 
-      });
+    const { email, full_name, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: "Email and password are required" });
     }
-    
-    // Verify token with Google
-    let ticket;
-    try {
-      ticket = await googleClient.verifyIdToken({
-        idToken: token,
-        audience: process.env.GOOGLE_CLIENT_ID,
-      });
-    } catch (verifyError) {
-      console.error("❌ Google token verification failed:", verifyError);
-      return res.status(401).json({ 
-        success: false, 
-        message: "Invalid Google token" 
-      });
+
+    if (password.length < 8) {
+      return res.status(400).json({ success: false, message: "Password must be at least 8 characters" });
     }
-    
-    const payload = ticket.getPayload();
-    const { sub: google_id, email, name: full_name, picture: avatar_url } = payload;
-    
-    // Check if user exists
-    let user = await pool.query(
-      "SELECT * FROM users WHERE google_id = $1 OR email = $2",
-      [google_id, email]
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ success: false, message: "Invalid email address" });
+    }
+
+    const existing = await pool.query("SELECT id FROM users WHERE email = $1", [email.toLowerCase()]);
+    if (existing.rows.length > 0) {
+      return res.status(409).json({ success: false, message: "Email already registered" });
+    }
+
+    const password_hash = await bcrypt.hash(password, 12);
+
+    const result = await pool.query(
+      `INSERT INTO users (email, full_name, password_hash)
+       VALUES ($1, $2, $3)
+       RETURNING id, email, full_name, role, created_at`,
+      [email.toLowerCase(), full_name?.trim() || null, password_hash]
     );
-    
-    if (user.rows.length === 0) {
-      // Create new user
-      const result = await pool.query(
-        `INSERT INTO users (google_id, email, full_name, avatar_url, auth_provider) 
-         VALUES ($1,$2,$3,$4,'google') RETURNING *`,
-        [google_id, email, full_name, avatar_url]
-      );
-      user = result;
-    } else {
-      // Update existing user info (in case profile changed)
-      const result = await pool.query(
-        `UPDATE users 
-         SET full_name = $1, avatar_url = $2, google_id = $3, updated_at = NOW() 
-         WHERE id = $4 
-         RETURNING *`,
-        [full_name, avatar_url, google_id, user.rows[0].id]
-      );
-      user = result;
-    }
-    
-    // Generate JWT
-    const jwtPayload = { 
-      id: user.rows[0].id, 
-      email: user.rows[0].email,
-      role: user.rows[0].role 
-    };
-    const jwtToken = jwt.sign(jwtPayload, process.env.JWT_SECRET, { 
-      expiresIn: "14d" 
+
+    const user = result.rows[0];
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: "14d" }
+    );
+
+    res.status(201).json({
+      success: true,
+      message: "Account created successfully",
+      user,
+      token,
     });
-    
+  } catch (err) {
+    console.error("❌ Register error:", err.message);
+    res.status(500).json({ success: false, message: "Registration failed" });
+  }
+});
+
+// Login
+app.post("/api/auth/login", authLimiter, async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: "Email and password are required" });
+    }
+
+    const result = await pool.query(
+      "SELECT id, email, full_name, password_hash, role FROM users WHERE email = $1",
+      [email.toLowerCase()]
+    );
+
+    // Always compare to prevent timing attacks
+    const dummyHash = "$2b$12$invalidhashinvalidhashinvalidhashinvalidhashinvalidhashXX";
+    const user = result.rows[0];
+    const hashToCompare = user ? user.password_hash : dummyHash;
+
+    const isValid = await bcrypt.compare(password, hashToCompare);
+
+    if (!user || !isValid) {
+      return res.status(401).json({ success: false, message: "Invalid email or password" });
+    }
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: "14d" }
+    );
+
     res.status(200).json({
       success: true,
-      user: {
-        id: user.rows[0].id,
-        email: user.rows[0].email,
-        full_name: user.rows[0].full_name,
-        avatar_url: user.rows[0].avatar_url,
-        role: user.rows[0].role
-      },
-      token: jwtToken,
       message: "Login successful",
+      user: {
+        id: user.id,
+        email: user.email,
+        full_name: user.full_name,
+        role: user.role,
+      },
+      token,
     });
-    
   } catch (err) {
-    console.error("❌ Google auth error:", err.message);
-    res.status(500).json({ 
-      success: false, 
-      message: "Authentication failed. Please try again." 
-    });
+    console.error("❌ Login error:", err.message);
+    res.status(500).json({ success: false, message: "Login failed" });
   }
 });
 
-// Verify JWT Token
-app.post("/api/verify-token", (req, res) => {
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader) {
-    return res.status(401).json({ 
-      success: false, 
-      message: "No token provided" 
-    });
-  }
-
-  const token = authHeader.split(" ")[1];
-
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    res.status(200).json({ 
-      success: true, 
-      user: decoded 
-    });
-  } catch (err) {
-    if (err.name === 'TokenExpiredError') {
-      return res.status(401).json({ 
-        success: false, 
-        message: "Token expired",
-        expired: true 
-      });
-    }
-    res.status(401).json({ 
-      success: false, 
-      message: "Invalid token" 
-    });
-  }
-});
-
-// Get Current User Profile
-app.get("/api/user/profile", authenticateToken, async (req, res) => {
+// Verify Token
+app.get("/api/auth/me", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
-      "SELECT id, email, full_name, avatar_url, auth_provider, role, created_at FROM users WHERE id = $1",
+      "SELECT id, email, full_name, role, created_at FROM users WHERE id = $1",
       [req.user.id]
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        message: "User not found" 
-      });
+      return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    res.status(200).json({
-      success: true,
-      user: result.rows[0]
-    });
-  } catch (error) {
-    console.error("❌ Profile fetch error:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Failed to fetch profile" 
-    });
+    res.status(200).json({ success: true, user: result.rows[0] });
+  } catch (err) {
+    console.error("❌ Auth/me error:", err.message);
+    res.status(500).json({ success: false, message: "Failed to fetch user" });
   }
-});
-
-// Logout (optional - mainly client-side)
-app.post("/api/auth/logout", authenticateToken, async (req, res) => {
-  // You could implement token blacklisting here if needed
-  res.json({ 
-    success: true, 
-    message: "Logged out successfully" 
-  });
 });
 
 // ============================================
 // PRODUCT ROUTES
 // ============================================
 
-// Upload Product (PROTECTED)
-app.post("/api/upload", authenticateToken, upload.single("image"), async (req, res) => {
+// GET all products (PUBLIC)
+app.get("/api/products", async (req, res) => {
+  try {
+    const { category, brand, search, page = 1, limit = 20 } = req.query;
+
+    const pageNum = Math.max(1, parseInt(page));
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
+    const offset = (pageNum - 1) * limitNum;
+
+    let conditions = [];
+    let values = [];
+    let idx = 1;
+
+    if (category) {
+      conditions.push(`category ILIKE $${idx++}`);
+      values.push(`%${category}%`);
+    }
+    if (brand) {
+      conditions.push(`brand ILIKE $${idx++}`);
+      values.push(`%${brand}%`);
+    }
+    if (search) {
+      conditions.push(`(product_name ILIKE $${idx} OR description ILIKE $${idx})`);
+      values.push(`%${search}%`);
+      idx++;
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM products ${where}`,
+      values
+    );
+    const total = parseInt(countResult.rows[0].count);
+
+    const result = await pool.query(
+      `SELECT * FROM products ${where} ORDER BY created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...values, limitNum, offset]
+    );
+
+    res.status(200).json({
+      success: true,
+      products: result.rows,
+      pagination: {
+        total,
+        page: pageNum,
+        limit: limitNum,
+        pages: Math.ceil(total / limitNum),
+      },
+    });
+  } catch (err) {
+    console.error("❌ Fetch products error:", err.message);
+    res.status(500).json({ success: false, message: "Failed to fetch products" });
+  }
+});
+
+// GET single product (PUBLIC)
+app.get("/api/products/:id", async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ success: false, message: "Invalid product ID" });
+    }
+
+    const result = await pool.query("SELECT * FROM products WHERE id = $1", [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Product not found" });
+    }
+
+    res.status(200).json({ success: true, product: result.rows[0] });
+  } catch (err) {
+    console.error("❌ Fetch product error:", err.message);
+    res.status(500).json({ success: false, message: "Failed to fetch product" });
+  }
+});
+
+// CREATE product (PROTECTED)
+app.post("/api/products", authenticateToken, upload.single("image"), async (req, res) => {
   let cloudinaryId = null;
 
   try {
     if (!req.file) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "No image file uploaded" 
-      });
+      return res.status(400).json({ success: false, message: "Product image is required" });
     }
 
-    const { 
-      productName, 
-      category, 
-      brand, 
-      price, 
-      stock, 
-      sku, 
-      productClass, 
-      sizes, 
-      colors, 
-      description 
+    const {
+      productName,
+      category,
+      brand,
+      price,
+      stock,
+      sku,
+      productClass,
+      sizes,
+      colors,
+      description,
     } = req.body;
 
-    // Upload to Cloudinary
-    const cloudinaryResult = await new Promise((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream(
-        { 
-          folder: "myAppUploads", 
-          tags: ["myApp"], 
-          resource_type: "image" 
-        },
-        (error, result) => (error ? reject(error) : resolve(result))
-      );
-      stream.end(req.file.buffer);
-    });
+    if (!productName?.trim()) {
+      return res.status(400).json({ success: false, message: "Product name is required" });
+    }
 
+    const cloudinaryResult = await uploadToCloudinary(req.file.buffer);
     cloudinaryId = cloudinaryResult.public_id;
 
-    // Insert into database
-    const query = `
-      INSERT INTO products 
-      (product_name, category, brand, price, stock, sku, product_class, 
-       sizes, colors, description, image_url, cloudinary_id, created_by)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-      RETURNING *;
-    `;
-    
-    const values = [
-      productName || "Untitled Product",
-      category || "Uncategorized",
-      brand || "Unknown",
-      price ? parseFloat(price) : 0,
-      stock ? parseInt(stock) : 0,
-      sku || `SKU-${Date.now()}`,
-      productClass || "Standard",
-      sizes || "N/A",
-      colors || "N/A",
-      description || "No description",
-      cloudinaryResult.secure_url,
-      cloudinaryResult.public_id,
-      req.user.id // Track who created the product
-    ];
-
-    const dbResult = await pool.query(query, values);
+    const result = await pool.query(
+      `INSERT INTO products 
+        (product_name, category, brand, price, stock, sku, product_class, 
+         sizes, colors, description, image_url, cloudinary_id, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       RETURNING *`,
+      [
+        productName.trim(),
+        category?.trim() || "Uncategorized",
+        brand?.trim() || "Unknown",
+        price ? Math.abs(parseFloat(price)) : 0,
+        stock ? Math.abs(parseInt(stock)) : 0,
+        sku?.trim() || `SKU-${Date.now()}`,
+        productClass?.trim() || "Standard",
+        sizes?.trim() || "N/A",
+        colors?.trim() || "N/A",
+        description?.trim() || "No description",
+        cloudinaryResult.secure_url,
+        cloudinaryResult.public_id,
+        req.user.id,
+      ]
+    );
 
     res.status(201).json({
       success: true,
-      product: dbResult.rows[0],
-      message: "Product uploaded successfully",
+      product: result.rows[0],
+      message: "Product created successfully",
     });
-  } catch (error) {
-    console.error("❌ Upload error:", error.message);
-
-    // Cleanup Cloudinary if DB insert failed
-    if (cloudinaryId) {
-      await cloudinary.uploader.destroy(cloudinaryId).catch(err => 
-        console.error("Failed to cleanup Cloudinary:", err)
-      );
-    }
-
-    res.status(500).json({
-      success: false,
-      message: error.message || "Upload failed",
-    });
+  } catch (err) {
+    console.error("❌ Create product error:", err.message);
+    if (cloudinaryId) await deleteFromCloudinary(cloudinaryId);
+    res.status(500).json({ success: false, message: "Failed to create product" });
   }
 });
 
-// Get All Products (PUBLIC with optional auth for user-specific data)
-app.get("/api/products", optionalAuth, async (req, res) => {
-  try {
-    const result = await pool.query(
-      "SELECT * FROM products ORDER BY created_at DESC"
-    );
-    
-    res.status(200).json({
-      success: true,
-      products: result.rows
-    });
-  } catch (error) {
-    console.error("❌ Fetch products error:", error.message);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch products"
-    });
-  }
-});
-
-// Get Single Product (PUBLIC)
-app.get("/api/products/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const result = await pool.query(
-      "SELECT * FROM products WHERE id = $1",
-      [id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found"
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      product: result.rows[0]
-    });
-  } catch (error) {
-    console.error("❌ Fetch product error:", error.message);
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch product"
-    });
-  }
-});
-
-// Update Product (PROTECTED)
+// UPDATE product (PROTECTED)
 app.put("/api/products/:id", authenticateToken, upload.single("image"), async (req, res) => {
   let newCloudinaryId = null;
-  let oldCloudinaryId = null;
 
   try {
-    const { id } = req.params;
-    const { 
-      productName, 
-      category, 
-      brand, 
-      price, 
-      stock, 
-      sku, 
-      productClass, 
-      sizes, 
-      colors, 
-      description 
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ success: false, message: "Invalid product ID" });
+    }
+
+    const existing = await pool.query("SELECT * FROM products WHERE id = $1", [id]);
+
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Product not found" });
+    }
+
+    const product = existing.rows[0];
+
+    // Only owner or admin can update
+    if (product.created_by !== req.user.id && req.user.role !== "admin") {
+      return res.status(403).json({ success: false, message: "Permission denied" });
+    }
+
+    const {
+      productName,
+      category,
+      brand,
+      price,
+      stock,
+      sku,
+      productClass,
+      sizes,
+      colors,
+      description,
     } = req.body;
 
-    // Get existing product
-    const existingProduct = await pool.query(
-      "SELECT * FROM products WHERE id = $1",
-      [id]
-    );
+    let imageUrl = product.image_url;
+    let cloudinaryId = product.cloudinary_id;
 
-    if (existingProduct.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found"
-      });
-    }
-
-    // Check if user owns the product (or is admin)
-    if (existingProduct.rows[0].created_by !== req.user.id && req.user.role !== 'admin') {
-      return res.status(403).json({
-        success: false,
-        message: "You don't have permission to update this product"
-      });
-    }
-
-    let imageUrl = existingProduct.rows[0].image_url;
-    let cloudinaryId = existingProduct.rows[0].cloudinary_id;
-
-    // Handle new image upload
     if (req.file) {
-      oldCloudinaryId = cloudinaryId;
-
-      const cloudinaryResult = await new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream(
-          { folder: "myAppUploads", tags: ["myApp"], resource_type: "image" },
-          (error, result) => (error ? reject(error) : resolve(result))
-        );
-        stream.end(req.file.buffer);
-      });
-
+      const cloudinaryResult = await uploadToCloudinary(req.file.buffer);
       newCloudinaryId = cloudinaryResult.public_id;
       imageUrl = cloudinaryResult.secure_url;
-      cloudinaryId = cloudinaryResult.public_id;
 
-      // Delete old image
-      if (oldCloudinaryId) {
-        await cloudinary.uploader.destroy(oldCloudinaryId).catch(err =>
-          console.error("Failed to delete old image:", err)
-        );
-      }
+      // Delete old image after new one is confirmed
+      await deleteFromCloudinary(product.cloudinary_id);
+      cloudinaryId = newCloudinaryId;
     }
 
-    // Update database
-    const query = `
-      UPDATE products 
-      SET product_name = $1, category = $2, brand = $3, price = $4, 
-          stock = $5, sku = $6, product_class = $7, sizes = $8, 
-          colors = $9, description = $10, image_url = $11, 
-          cloudinary_id = $12, updated_at = NOW()
-      WHERE id = $13
-      RETURNING *;
-    `;
-
-    const values = [
-      productName || existingProduct.rows[0].product_name,
-      category || existingProduct.rows[0].category,
-      brand || existingProduct.rows[0].brand,
-      price ? parseFloat(price) : existingProduct.rows[0].price,
-      stock ? parseInt(stock) : existingProduct.rows[0].stock,
-      sku || existingProduct.rows[0].sku,
-      productClass || existingProduct.rows[0].product_class,
-      sizes || existingProduct.rows[0].sizes,
-      colors || existingProduct.rows[0].colors,
-      description || existingProduct.rows[0].description,
-      imageUrl,
-      cloudinaryId,
-      id
-    ];
-
-    const result = await pool.query(query, values);
+    const result = await pool.query(
+      `UPDATE products 
+       SET product_name = $1, category = $2, brand = $3, price = $4,
+           stock = $5, sku = $6, product_class = $7, sizes = $8,
+           colors = $9, description = $10, image_url = $11,
+           cloudinary_id = $12, updated_at = NOW()
+       WHERE id = $13
+       RETURNING *`,
+      [
+        productName?.trim() || product.product_name,
+        category?.trim() || product.category,
+        brand?.trim() || product.brand,
+        price !== undefined ? Math.abs(parseFloat(price)) : product.price,
+        stock !== undefined ? Math.abs(parseInt(stock)) : product.stock,
+        sku?.trim() || product.sku,
+        productClass?.trim() || product.product_class,
+        sizes?.trim() || product.sizes,
+        colors?.trim() || product.colors,
+        description?.trim() || product.description,
+        imageUrl,
+        cloudinaryId,
+        id,
+      ]
+    );
 
     res.status(200).json({
       success: true,
       product: result.rows[0],
-      message: "Product updated successfully"
+      message: "Product updated successfully",
     });
-  } catch (error) {
-    console.error("❌ Update error:", error.message);
-
-    // Rollback: if new image was uploaded but update failed
-    if (newCloudinaryId) {
-      await cloudinary.uploader.destroy(newCloudinaryId).catch(err =>
-        console.error("Failed to cleanup:", err)
-      );
-    }
-
-    res.status(500).json({
-      success: false,
-      message: error.message || "Update failed"
-    });
+  } catch (err) {
+    console.error("❌ Update product error:", err.message);
+    if (newCloudinaryId) await deleteFromCloudinary(newCloudinaryId);
+    res.status(500).json({ success: false, message: "Failed to update product" });
   }
 });
 
-// Delete Product (PROTECTED)
+// DELETE product (PROTECTED)
 app.delete("/api/products/:id", authenticateToken, async (req, res) => {
   try {
-    const { id } = req.params;
-
-    // Get the product
-    const productResult = await pool.query(
-      "SELECT * FROM products WHERE id = $1",
-      [id]
-    );
-
-    if (productResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Product not found"
-      });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      return res.status(400).json({ success: false, message: "Invalid product ID" });
     }
 
-    const product = productResult.rows[0];
+    const result = await pool.query("SELECT * FROM products WHERE id = $1", [id]);
 
-    // Check if user owns the product (or is admin)
-    if (product.created_by !== req.user.id && req.user.role !== 'admin') {
-      return res.status(403).json({
-        success: false,
-        message: "You don't have permission to delete this product"
-      });
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Product not found" });
     }
 
-    const cloudinaryId = product.cloudinary_id;
+    const product = result.rows[0];
 
-    // Delete from Cloudinary
-    if (cloudinaryId) {
-      await cloudinary.uploader.destroy(cloudinaryId).catch(err =>
-        console.error("Failed to delete from Cloudinary:", err)
-      );
+    if (product.created_by !== req.user.id && req.user.role !== "admin") {
+      return res.status(403).json({ success: false, message: "Permission denied" });
     }
 
-    // Delete from database
     await pool.query("DELETE FROM products WHERE id = $1", [id]);
+    await deleteFromCloudinary(product.cloudinary_id);
 
-    res.status(200).json({
-      success: true,
-      message: "Product deleted successfully"
-    });
-  } catch (error) {
-    console.error("❌ Delete product error:", error.message);
-    res.status(500).json({
-      success: false,
-      message: "Failed to delete product"
-    });
+    res.status(200).json({ success: true, message: "Product deleted successfully" });
+  } catch (err) {
+    console.error("❌ Delete product error:", err.message);
+    res.status(500).json({ success: false, message: "Failed to delete product" });
   }
 });
 
@@ -714,74 +622,57 @@ app.delete("/api/products/:id", authenticateToken, async (req, res) => {
 // ============================================
 
 app.get("/", (req, res) => {
-  res.json({ 
-    success: true, 
-    message: "Brightnal API is running",
-    version: "2.0.0"
-  });
+  res.json({ success: true, message: "Brightnal API is running", version: "3.0.0" });
 });
 
-app.get("/api/health", (req, res) => {
-  res.json({ 
-    success: true, 
-    status: "healthy",
-    timestamp: new Date().toISOString()
-  });
+app.get("/api/health", async (req, res) => {
+  try {
+    await pool.query("SELECT 1");
+    res.json({ success: true, status: "healthy", timestamp: new Date().toISOString() });
+  } catch {
+    res.status(503).json({ success: false, status: "unhealthy" });
+  }
 });
 
 // ============================================
 // ERROR HANDLERS
 // ============================================
 
-// 404 handler
 app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: "Route not found"
-  });
+  res.status(404).json({ success: false, message: "Route not found" });
 });
 
-// Global error handler
 app.use((err, req, res, next) => {
-  console.error('❌ Error:', err.stack);
-  
-  if (err.name === 'UnauthorizedError') {
-    return res.status(401).json({ 
-      success: false, 
-      message: 'Invalid token' 
-    });
+  console.error("❌ Unhandled error:", err.message);
+
+  if (err.message === "Not allowed by CORS") {
+    return res.status(403).json({ success: false, message: "CORS policy violation" });
   }
-  
-  if (err.message === 'Not allowed by CORS') {
-    return res.status(403).json({
-      success: false,
-      message: 'CORS policy violation'
-    });
+
+  if (err.message === "Only image files are allowed") {
+    return res.status(400).json({ success: false, message: err.message });
   }
-  
-  res.status(500).json({ 
-    success: false, 
-    message: process.env.NODE_ENV === 'production' 
-      ? 'Internal server error' 
-      : err.message 
+
+  res.status(500).json({
+    success: false,
+    message: process.env.NODE_ENV === "production" ? "Internal server error" : err.message,
   });
 });
 
 // ============================================
-// START SERVER
+// START
 // ============================================
 
 const PORT = process.env.PORT || 7700;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`📝 Environment: ${process.env.NODE_ENV || "development"}`);
 });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM signal received: closing HTTP server');
+process.on("SIGTERM", () => {
+  console.log("SIGTERM received: shutting down gracefully");
   server.close(() => {
-    console.log('HTTP server closed');
     pool.end();
+    console.log("Server closed");
   });
 });

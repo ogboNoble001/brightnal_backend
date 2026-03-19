@@ -3,10 +3,114 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Upload Product</title>
+  <title>Brightnal Admin</title>
   <style>
-    body { font-family: Arial, sans-serif; padding: 20px; }
-    .product-list { margin-top: 40px; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; padding: 24px; background: #f5f5f5; }
+
+    h2 { margin-bottom: 16px; }
+
+    /* ---- AUTH ---- */
+    #authSection {
+      max-width: 400px;
+      background: white;
+      padding: 24px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      margin-bottom: 32px;
+    }
+    #authSection input {
+      display: block;
+      width: 100%;
+      padding: 10px;
+      margin-bottom: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    #authSection button {
+      width: 100%;
+      padding: 10px;
+      margin-bottom: 8px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    #loginBtn  { background: #333; color: white; }
+    #registerBtn { background: white; color: #333; border: 1px solid #333 !important; }
+    #logoutBtn {
+      background: #dc3545;
+      color: white;
+      border: none;
+      padding: 8px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    #authStatus {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 24px;
+      padding: 12px 16px;
+      background: #e6f4ea;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+
+    /* ---- PRODUCT FORM ---- */
+    #productSection {
+      background: white;
+      padding: 24px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      margin-bottom: 32px;
+      max-width: 600px;
+    }
+    #uploadForm input,
+    #uploadForm textarea {
+      display: block;
+      width: 100%;
+      padding: 10px;
+      margin-bottom: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    #uploadForm textarea { resize: vertical; min-height: 80px; }
+    #uploadForm button[type="submit"] {
+      background: #333;
+      color: white;
+      border: none;
+      padding: 10px 24px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    #cancelUpdateBtn {
+      background: #aaa;
+      color: white;
+      border: none;
+      padding: 10px 24px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      margin-left: 8px;
+      display: none;
+    }
+
+    #message {
+      margin-top: 12px;
+      font-size: 14px;
+      min-height: 20px;
+    }
+
+    /* ---- PRODUCTS ---- */
+    .product-list { margin-top: 8px; }
     .product {
       border: 1px solid #ddd;
       padding: 12px;
@@ -14,66 +118,83 @@
       display: flex;
       gap: 16px;
       align-items: center;
+      background: white;
+      border-radius: 6px;
     }
     .product img {
       width: 80px;
       height: 80px;
       object-fit: cover;
       border-radius: 4px;
+      flex-shrink: 0;
+    }
+    .product-info { flex: 1; font-size: 14px; line-height: 1.6; }
+    .product-actions { display: flex; gap: 8px; flex-shrink: 0; }
+    .update-btn {
+      background: #2196F3;
+      color: white;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 4px;
+      cursor: pointer;
     }
     .delete-btn {
       background: #dc3545;
       color: white;
       border: none;
-      padding: 8px 16px;
+      padding: 8px 14px;
       border-radius: 4px;
       cursor: pointer;
-      margin-left: auto;
-    }
-    .delete-btn:hover {
-      background: #c82333;
-    }
-    .update-btn {
-      background: #2196F3;
-      color: white;
-      border: none;
-      padding: 8px 16px;
-      border-radius: 4px;
-      cursor: pointer;
-      margin-right: 5px;
-    }
-    .update-btn:hover {
-      background: #0b7dda;
     }
   </style>
 </head>
 <body>
 
-  <h2>Upload Product</h2>
+  <!-- AUTH: shown when logged out -->
+  <div id="authSection">
+    <h2>Admin Login</h2>
+    <input type="text"     id="authName"     placeholder="Full name (register only)" />
+    <input type="email"    id="authEmail"    placeholder="Email" />
+    <input type="password" id="authPassword" placeholder="Password" />
+    <button id="loginBtn">Login</button>
+    <button id="registerBtn">Register</button>
+    <div id="authMessage" style="margin-top:8px;font-size:13px;"></div>
+  </div>
 
-  <form id="uploadForm">
-    <input type="text" id="productName" name="productName" placeholder="Product Name" required />
-    <input type="text" id="category" name="category" placeholder="Category" />
-    <input type="text" id="brand" name="brand" placeholder="Brand" />
-    <input type="number" id="price" name="price" placeholder="Price" step="0.01" />
-    <input type="number" id="stock" name="stock" placeholder="Stock" />
-    <input type="text" id="sku" name="sku" placeholder="SKU" />
-    <input type="text" id="productClass" name="productClass" placeholder="Product Class" />
-    <input type="text" id="sizes" name="sizes" placeholder="Sizes" />
-    <input type="text" id="colors" name="colors" placeholder="Colors" />
-    <textarea id="description" name="description" placeholder="Description"></textarea>
-    <input type="file" name="image" accept="image/*" />
-    <button type="submit">Upload Product</button>
-  </form>
+  <!-- STATUS: shown when logged in -->
+  <div id="authStatus" style="display:none;">
+    <span id="loggedInAs"></span>
+    <button id="logoutBtn">Logout</button>
+  </div>
 
-  <div id="message"></div>
+  <!-- PRODUCT FORM: shown when logged in -->
+  <div id="productSection" style="display:none;">
+    <h2 id="formTitle">Upload Product</h2>
+    <form id="uploadForm">
+      <input type="text"   id="productName"  name="productName"  placeholder="Product Name *" required />
+      <input type="text"   id="category"     name="category"     placeholder="Category" />
+      <input type="text"   id="brand"        name="brand"        placeholder="Brand" />
+      <input type="number" id="price"        name="price"        placeholder="Price (₦)" step="0.01" min="0" />
+      <input type="number" id="stock"        name="stock"        placeholder="Stock" min="0" />
+      <input type="text"   id="sku"          name="sku"          placeholder="SKU" />
+      <input type="text"   id="productClass" name="productClass" placeholder="Product Class" />
+      <input type="text"   id="sizes"        name="sizes"        placeholder="Sizes (e.g. S, M, L)" />
+      <input type="text"   id="colors"       name="colors"       placeholder="Colors" />
+      <textarea id="description" name="description" placeholder="Description"></textarea>
+      <input type="file"   id="imageInput"   name="image" accept="image/*" />
+      <div style="margin-top:4px;">
+        <button type="submit" id="submitBtn">Upload Product</button>
+        <button type="button" id="cancelUpdateBtn">Cancel</button>
+      </div>
+    </form>
+    <div id="message"></div>
+  </div>
 
-  <hr />
-
-  <h2>Products</h2>
-  <button id="loadProductsBtn">Load Products</button>
-
-  <div class="product-list" id="productList"></div>
+  <!-- PRODUCTS LIST -->
+  <div id="productsArea" style="display:none;">
+    <h2>Products</h2>
+    <div class="product-list" id="productList"></div>
+  </div>
 
   <script src="main.js"></script>
 </body>
