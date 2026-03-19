@@ -127,7 +127,6 @@ app.use(express.static("public"));
 const allowedOrigins = [
   "https://brightnal-backend.vercel.app",
   "http://localhost:7700",
-  "https://bright-nal.vercel.app"
 ];
 
 app.use(
@@ -556,8 +555,8 @@ app.put("/api/products/:id", upload.single("image"), async (req, res) => {
         productName?.trim() || product.product_name,
         category?.trim() || product.category,
         brand?.trim() || product.brand,
-        price !== undefined ? Math.abs(parseFloat(price)) : product.price,
-        stock !== undefined ? Math.abs(parseInt(stock)) : product.stock,
+        (price !== undefined && price !== "" && !isNaN(parseFloat(price))) ? Math.abs(parseFloat(price)) : product.price,
+        (stock !== undefined && stock !== "" && !isNaN(parseInt(stock))) ? Math.abs(parseInt(stock)) : product.stock,
         sku?.trim() || product.sku,
         productClass?.trim() || product.product_class,
         sizes?.trim() || product.sizes,
