@@ -127,7 +127,7 @@ app.use(express.static("public"));
 const allowedOrigins = [
   "https://brightnal-backend.vercel.app",
   "http://localhost:7700",
-  "https://bright-nal.vercel.app/"
+  "https://bright-nal.vercel.app"
 ];
 
 app.use(
