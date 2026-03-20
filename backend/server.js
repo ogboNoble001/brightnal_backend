@@ -57,7 +57,6 @@ pool.query("SELECT NOW()", (err) => {
 
 const initTables = async () => {
   try {
-    // Users first (products references it)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
@@ -87,8 +86,7 @@ const initTables = async () => {
         image_url TEXT NOT NULL,
         cloudinary_id TEXT NOT NULL,
         created_by INT REFERENCES users(id) ON DELETE SET NULL,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
+        created_at TIMESTAMP DEFAULT NOW()
       )
     `);
     console.log("✅ Products table ready");
@@ -126,8 +124,8 @@ app.use(express.static("public"));
 
 const allowedOrigins = [
   "https://brightnal-backend.vercel.app",
+  "https://bright-nal.vercel.app",
   "http://localhost:7700",
-  "https://bright-nal.vercel.app"
 ];
 
 app.use(
@@ -190,7 +188,7 @@ const authenticateToken = (req, res, next) => {
   const token = authHeader && authHeader.split(" ")[1];
 
   if (!token) {
-    return res.status(401).json({ success: false, message: "Access token is required" });
+    return res.status(401).json({ success: false, message: "Access token required" });
   }
 
   try {
@@ -202,13 +200,6 @@ const authenticateToken = (req, res, next) => {
     }
     return res.status(403).json({ success: false, message: "Invalid token" });
   }
-};
-
-const requireAdmin = (req, res, next) => {
-  if (req.user?.role !== "admin") {
-    return res.status(403).json({ success: false, message: "Admin access required" });
-  }
-  next();
 };
 
 // ============================================
@@ -237,8 +228,13 @@ const deleteFromCloudinary = async (publicId) => {
 // ============================================
 // AUTH ROUTES
 // ============================================
+//
+//  POST /api/auth/register  — create a new account
+//  POST /api/auth/login     — login, returns JWT
+//  GET  /api/auth/me        — verify token, returns current user
+//
+// ============================================
 
-// Register
 app.post("/api/auth/register", authLimiter, async (req, res) => {
   try {
     const { email, full_name, password } = req.body;
@@ -246,13 +242,10 @@ app.post("/api/auth/register", authLimiter, async (req, res) => {
     if (!email || !password) {
       return res.status(400).json({ success: false, message: "Email and password are required" });
     }
-
     if (password.length < 8) {
       return res.status(400).json({ success: false, message: "Password must be at least 8 characters" });
     }
-
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({ success: false, message: "Invalid email address" });
     }
 
@@ -262,7 +255,6 @@ app.post("/api/auth/register", authLimiter, async (req, res) => {
     }
 
     const password_hash = await bcrypt.hash(password, 12);
-
     const result = await pool.query(
       `INSERT INTO users (email, full_name, password_hash)
        VALUES ($1, $2, $3)
@@ -277,19 +269,13 @@ app.post("/api/auth/register", authLimiter, async (req, res) => {
       { expiresIn: "14d" }
     );
 
-    res.status(201).json({
-      success: true,
-      message: "Account created successfully",
-      user,
-      token,
-    });
+    res.status(201).json({ success: true, message: "Account created successfully", user, token });
   } catch (err) {
     console.error("❌ Register error:", err.message);
     res.status(500).json({ success: false, message: "Registration failed" });
   }
 });
 
-// Login
 app.post("/api/auth/login", authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -303,12 +289,9 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
       [email.toLowerCase()]
     );
 
-    // Always compare to prevent timing attacks
     const dummyHash = "$2b$12$invalidhashinvalidhashinvalidhashinvalidhashinvalidhashXX";
     const user = result.rows[0];
-    const hashToCompare = user ? user.password_hash : dummyHash;
-
-    const isValid = await bcrypt.compare(password, hashToCompare);
+    const isValid = await bcrypt.compare(password, user ? user.password_hash : dummyHash);
 
     if (!user || !isValid) {
       return res.status(401).json({ success: false, message: "Invalid email or password" });
@@ -323,12 +306,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
     res.status(200).json({
       success: true,
       message: "Login successful",
-      user: {
-        id: user.id,
-        email: user.email,
-        full_name: user.full_name,
-        role: user.role,
-      },
+      user: { id: user.id, email: user.email, full_name: user.full_name, role: user.role },
       token,
     });
   } catch (err) {
@@ -337,18 +315,15 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
   }
 });
 
-// Verify Token
 app.get("/api/auth/me", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
       "SELECT id, email, full_name, role, created_at FROM users WHERE id = $1",
       [req.user.id]
     );
-
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
-
     res.status(200).json({ success: true, user: result.rows[0] });
   } catch (err) {
     console.error("❌ Auth/me error:", err.message);
@@ -359,56 +334,26 @@ app.get("/api/auth/me", authenticateToken, async (req, res) => {
 // ============================================
 // PRODUCT ROUTES
 // ============================================
+//
+//  GET  /api/products            — get 4 latest products (for homepage)
+//  GET  /api/products/all        — get every product (for admin page)
+//  GET  /api/products/count      — get total number of products
+//  GET  /api/products/:id        — get a single product by ID
+//  POST /api/products            — create a new product (with image upload)
+//  PUT  /api/products/:id        — update a product (image optional)
+//  DELETE /api/products/:id      — delete a product + its Cloudinary image
+//
+// ============================================
 
-// GET all products (PUBLIC)
+// GET 4 latest products — for the homepage/storefront
 app.get("/api/products", async (req, res) => {
   try {
-    const { category, brand, search, page = 1, limit = 20 } = req.query;
-
-    const pageNum = Math.max(1, parseInt(page));
-    const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
-    const offset = (pageNum - 1) * limitNum;
-
-    let conditions = [];
-    let values = [];
-    let idx = 1;
-
-    if (category) {
-      conditions.push(`category ILIKE $${idx++}`);
-      values.push(`%${category}%`);
-    }
-    if (brand) {
-      conditions.push(`brand ILIKE $${idx++}`);
-      values.push(`%${brand}%`);
-    }
-    if (search) {
-      conditions.push(`(product_name ILIKE $${idx} OR description ILIKE $${idx})`);
-      values.push(`%${search}%`);
-      idx++;
-    }
-
-    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-
-    const countResult = await pool.query(
-      `SELECT COUNT(*) FROM products ${where}`,
-      values
-    );
-    const total = parseInt(countResult.rows[0].count);
-
     const result = await pool.query(
-      `SELECT * FROM products ${where} ORDER BY created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
-      [...values, limitNum, offset]
+      "SELECT * FROM products ORDER BY created_at DESC LIMIT 4"
     );
-
     res.status(200).json({
       success: true,
       products: result.rows,
-      pagination: {
-        total,
-        page: pageNum,
-        limit: limitNum,
-        pages: Math.ceil(total / limitNum),
-      },
     });
   } catch (err) {
     console.error("❌ Fetch products error:", err.message);
@@ -416,7 +361,38 @@ app.get("/api/products", async (req, res) => {
   }
 });
 
-// GET single product (PUBLIC)
+// GET all products — for the admin page, no limit
+app.get("/api/products/all", async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT * FROM products ORDER BY created_at DESC"
+    );
+    res.status(200).json({
+      success: true,
+      products: result.rows,
+      total: result.rows.length,
+    });
+  } catch (err) {
+    console.error("❌ Fetch all products error:", err.message);
+    res.status(500).json({ success: false, message: "Failed to fetch products" });
+  }
+});
+
+// GET product count — just the number, nothing else
+app.get("/api/products/count", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT COUNT(*) FROM products");
+    res.status(200).json({
+      success: true,
+      count: parseInt(result.rows[0].count),
+    });
+  } catch (err) {
+    console.error("❌ Count error:", err.message);
+    res.status(500).json({ success: false, message: "Failed to get product count" });
+  }
+});
+
+// GET single product by ID
 app.get("/api/products/:id", async (req, res) => {
   try {
     const id = parseInt(req.params.id);
@@ -425,7 +401,6 @@ app.get("/api/products/:id", async (req, res) => {
     }
 
     const result = await pool.query("SELECT * FROM products WHERE id = $1", [id]);
-
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: "Product not found" });
     }
@@ -437,7 +412,7 @@ app.get("/api/products/:id", async (req, res) => {
   }
 });
 
-// CREATE product (PROTECTED)
+// CREATE a new product
 app.post("/api/products", upload.single("image"), async (req, res) => {
   let cloudinaryId = null;
 
@@ -446,18 +421,7 @@ app.post("/api/products", upload.single("image"), async (req, res) => {
       return res.status(400).json({ success: false, message: "Product image is required" });
     }
 
-    const {
-      productName,
-      category,
-      brand,
-      price,
-      stock,
-      sku,
-      productClass,
-      sizes,
-      colors,
-      description,
-    } = req.body;
+    const { productName, category, brand, price, stock, sku, productClass, sizes, colors, description } = req.body;
 
     if (!productName?.trim()) {
       return res.status(400).json({ success: false, message: "Product name is required" });
@@ -467,8 +431,8 @@ app.post("/api/products", upload.single("image"), async (req, res) => {
     cloudinaryId = cloudinaryResult.public_id;
 
     const result = await pool.query(
-      `INSERT INTO products 
-        (product_name, category, brand, price, stock, sku, product_class, 
+      `INSERT INTO products
+        (product_name, category, brand, price, stock, sku, product_class,
          sizes, colors, description, image_url, cloudinary_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
        RETURNING *`,
@@ -488,11 +452,7 @@ app.post("/api/products", upload.single("image"), async (req, res) => {
       ]
     );
 
-    res.status(201).json({
-      success: true,
-      product: result.rows[0],
-      message: "Product created successfully",
-    });
+    res.status(201).json({ success: true, product: result.rows[0], message: "Product created successfully" });
   } catch (err) {
     console.error("❌ Create product error:", err.message);
     if (cloudinaryId) await deleteFromCloudinary(cloudinaryId);
@@ -500,7 +460,7 @@ app.post("/api/products", upload.single("image"), async (req, res) => {
   }
 });
 
-// UPDATE product (PUBLIC)
+// UPDATE a product (image is optional — old one is kept if none provided)
 app.put("/api/products/:id", upload.single("image"), async (req, res) => {
   let newCloudinaryId = null;
 
@@ -511,25 +471,12 @@ app.put("/api/products/:id", upload.single("image"), async (req, res) => {
     }
 
     const existing = await pool.query("SELECT * FROM products WHERE id = $1", [id]);
-
     if (existing.rows.length === 0) {
       return res.status(404).json({ success: false, message: "Product not found" });
     }
 
     const product = existing.rows[0];
-
-    const {
-      productName,
-      category,
-      brand,
-      price,
-      stock,
-      sku,
-      productClass,
-      sizes,
-      colors,
-      description,
-    } = req.body;
+    const { productName, category, brand, price, stock, sku, productClass, sizes, colors, description } = req.body;
 
     let imageUrl = product.image_url;
     let cloudinaryId = product.cloudinary_id;
@@ -538,14 +485,12 @@ app.put("/api/products/:id", upload.single("image"), async (req, res) => {
       const cloudinaryResult = await uploadToCloudinary(req.file.buffer);
       newCloudinaryId = cloudinaryResult.public_id;
       imageUrl = cloudinaryResult.secure_url;
-
-      // Delete old image after new one is confirmed
       await deleteFromCloudinary(product.cloudinary_id);
       cloudinaryId = newCloudinaryId;
     }
 
     const result = await pool.query(
-      `UPDATE products 
+      `UPDATE products
        SET product_name = $1, category = $2, brand = $3, price = $4,
            stock = $5, sku = $6, product_class = $7, sizes = $8,
            colors = $9, description = $10, image_url = $11,
@@ -557,7 +502,7 @@ app.put("/api/products/:id", upload.single("image"), async (req, res) => {
         category?.trim() || product.category,
         brand?.trim() || product.brand,
         (price !== undefined && price !== "" && !isNaN(parseFloat(price))) ? Math.abs(parseFloat(price)) : product.price,
-        (stock !== undefined && stock !== "" && !isNaN(parseInt(stock))) ? Math.abs(parseInt(stock)) : product.stock,
+        (stock !== undefined && stock !== "" && !isNaN(parseInt(stock)))   ? Math.abs(parseInt(stock))   : product.stock,
         sku?.trim() || product.sku,
         productClass?.trim() || product.product_class,
         sizes?.trim() || product.sizes,
@@ -569,11 +514,7 @@ app.put("/api/products/:id", upload.single("image"), async (req, res) => {
       ]
     );
 
-    res.status(200).json({
-      success: true,
-      product: result.rows[0],
-      message: "Product updated successfully",
-    });
+    res.status(200).json({ success: true, product: result.rows[0], message: "Product updated successfully" });
   } catch (err) {
     console.error("❌ Update product error:", err.message);
     if (newCloudinaryId) await deleteFromCloudinary(newCloudinaryId);
@@ -581,7 +522,7 @@ app.put("/api/products/:id", upload.single("image"), async (req, res) => {
   }
 });
 
-// DELETE product (PUBLIC)
+// DELETE a product and its image from Cloudinary
 app.delete("/api/products/:id", async (req, res) => {
   try {
     const id = parseInt(req.params.id);
@@ -590,15 +531,12 @@ app.delete("/api/products/:id", async (req, res) => {
     }
 
     const result = await pool.query("SELECT * FROM products WHERE id = $1", [id]);
-
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, message: "Product not found" });
     }
 
-    const product = result.rows[0];
-
     await pool.query("DELETE FROM products WHERE id = $1", [id]);
-    await deleteFromCloudinary(product.cloudinary_id);
+    await deleteFromCloudinary(result.rows[0].cloudinary_id);
 
     res.status(200).json({ success: true, message: "Product deleted successfully" });
   } catch (err) {
@@ -638,7 +576,6 @@ app.use((err, req, res, next) => {
   if (err.message === "Not allowed by CORS") {
     return res.status(403).json({ success: false, message: "CORS policy violation" });
   }
-
   if (err.message === "Only image files are allowed") {
     return res.status(400).json({ success: false, message: err.message });
   }

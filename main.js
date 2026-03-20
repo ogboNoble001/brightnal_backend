@@ -29,7 +29,7 @@ form.addEventListener("submit", async (e) => {
   messageDiv.textContent = "Uploading...";
 
   try {
-    const res  = await fetch(`${SERVER_URL}/api/products`, {
+    const res  = await fetch(`${SERVER_URL}/api/products/all`, {
       method: "POST",
       body: new FormData(form),
     });
