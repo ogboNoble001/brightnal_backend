@@ -2,13 +2,13 @@ const SERVER_URL = "https://brightnal.onrender.com";
 
 let currentUpdateId = null;
 
-const form         = document.getElementById("uploadForm");
-const messageDiv   = document.getElementById("message");
-const productList  = document.getElementById("productList");
-const loadBtn      = document.getElementById("loadProductsBtn");
-const formTitle    = document.getElementById("formTitle");
-const submitBtn    = document.getElementById("submitBtn");
-const cancelBtn    = document.getElementById("cancelUpdateBtn");
+const form        = document.getElementById("uploadForm");
+const messageDiv  = document.getElementById("message");
+const productList = document.getElementById("productList");
+const loadBtn     = document.getElementById("loadProductsBtn");
+const formTitle   = document.getElementById("formTitle");
+const submitBtn   = document.getElementById("submitBtn");
+const cancelBtn   = document.getElementById("cancelUpdateBtn");
 
 /* ---------------- UPLOAD / CREATE ---------------- */
 
@@ -29,7 +29,7 @@ form.addEventListener("submit", async (e) => {
   messageDiv.textContent = "Uploading...";
 
   try {
-    const res  = await fetch(`${SERVER_URL}/api/products/all`, {
+    const res  = await fetch(`${SERVER_URL}/api/products`, {
       method: "POST",
       body: new FormData(form),
     });
@@ -48,7 +48,7 @@ form.addEventListener("submit", async (e) => {
   }
 });
 
-/* ---------------- GET ALL PRODUCTS ---------------- */
+/* ---------------- GET ALL PRODUCTS (admin — no limit) ---------------- */
 
 loadBtn.addEventListener("click", loadProducts);
 
@@ -56,7 +56,7 @@ async function loadProducts() {
   productList.innerHTML = "Loading products...";
 
   try {
-    const res  = await fetch(`${SERVER_URL}/api/products`);
+    const res  = await fetch(`${SERVER_URL}/api/products/all`);
     const data = await res.json();
 
     if (!data.success) {
@@ -96,11 +96,11 @@ async function openUpdateForm(productId) {
     document.getElementById("colors").value       = p.colors        || "";
     document.getElementById("description").value  = p.description   || "";
 
-    currentUpdateId           = productId;
-    formTitle.textContent     = "Update Product";
-    submitBtn.textContent     = "Update Product";
-    cancelBtn.style.display   = "inline-block";
-    messageDiv.textContent    = "Editing product...";
+    currentUpdateId         = productId;
+    formTitle.textContent   = "Update Product";
+    submitBtn.textContent   = "Update Product";
+    cancelBtn.style.display = "inline-block";
+    messageDiv.textContent  = "Editing product...";
 
     form.scrollIntoView({ behavior: "smooth" });
   } catch (err) {
@@ -171,7 +171,7 @@ async function deleteProduct(productId) {
 
 function renderProducts(products) {
   if (!products.length) {
-    productList.innerHTML = "<p>No product found.</p>";
+    productList.innerHTML = "<p>No products found.</p>";
     return;
   }
 
